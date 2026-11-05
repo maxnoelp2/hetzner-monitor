@@ -1,2 +1,6 @@
 # hetzner-monitor
-Monitoring &amp; Alerting für Hetzner Cloud Server
+Monitoring & Alerting für Hetzner Cloud Server
+
+## Lizenz
+
+[AGPL-3.0](LICENSE)
