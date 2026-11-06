@@ -1,0 +1,68 @@
+# Design: Data model (PostgreSQL)
+
+Status: **proposed** · Source of truth once code exists: `migrations/`
+
+🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
+
+```sql
+-- tenancy & auth
+organizations(id uuid pk, name text, created_at)
+users(id uuid pk, email citext unique, name text, password_hash text /* argon2id */, created_at, disabled_at)
+memberships(org_id fk, user_id fk, role text /* owner|admin|member */, pk(org_id, user_id))
+api_keys(id uuid pk, org_id fk, user_id fk, name text, prefix text, key_hash text /* sha256 */,
+         scopes text[], last_used_at, expires_at, created_at)
+sessions(id uuid pk, user_id fk, token_hash text, user_agent text, created_at, expires_at)
+
+-- hetzner
+hetzner_projects(
+  id uuid pk, org_id fk, name text,
+  token_ct bytea 🔒, token_dek_ct bytea 🔒, key_version int, token_hint text /* last 4 chars */,
+  status text /* active|invalid_token|degraded|paused */,
+  budget_share real default 0.5,
+  rl_limit int, rl_remaining int, rl_reset_at,
+  metrics_interval_s int, last_fast_at, last_metrics_at, last_inventory_at,
+  created_at)
+
+resources(
+  id uuid pk, project_id fk,
+  kind text /* server|load_balancer|volume|certificate|floating_ip|primary_ip */,
+  hetzner_id bigint, name text, labels jsonb, snapshot jsonb,
+  first_seen_at, last_seen_at, deleted_at,
+  unique(project_id, kind, hetzner_id))
+
+-- alerting
+rules(
+  id uuid pk, org_id fk, project_id fk null /* null = all projects of the org */,
+  name text, check_type text, params jsonb, selector text null, resource_id fk null,
+  severity text /* info|warning|critical */, enabled bool, is_default bool,
+  renotify_s int default 14400, created_at, updated_at)
+
+alerts(
+  id uuid pk, rule_id fk, resource_id fk null, project_id fk,
+  state text /* pending|firing|resolved */, severity text, value double precision, message text,
+  pending_since, fired_at, resolved_at, last_notified_at, acked_by fk null, acked_at)
+  -- partial unique: (rule_id, coalesce(resource_id, nil-uuid)) where state <> 'resolved'
+
+alert_events(id bigserial pk, alert_id fk, type text /* pending|fired|resolved|acked|renotified|suppressed */,
+             at, data jsonb)
+
+silences(id uuid pk, org_id fk, project_id fk null, resource_id fk null, selector text null,
+         starts_at, ends_at, reason text, created_by fk)
+
+-- notifications
+notification_channels(id uuid pk, org_id fk, type text, name text,
+                      config_ct bytea 🔒, config_dek_ct bytea 🔒, key_version int,
+                      min_severity text, enabled bool)
+rule_channels(rule_id fk, channel_id fk, pk(rule_id, channel_id))
+notification_jobs(id bigserial pk, alert_event_id fk, channel_id fk,
+                  status text /* queued|sent|failed */, attempts int, next_attempt_at, last_error text)
+push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text, created_at)
+```
+
+## Notes
+
+- **Tenancy:** every tenant table reaches `organizations` via `org_id` or a parent FK. Repositories take an `OrgId` argument — never query tenant data without it.
+- **Bootstrap (self-hosted):** first start creates a default org and an admin (`HM_ADMIN_EMAIL` / `HM_ADMIN_PASSWORD`, or a generated password printed once).
+- **Retention (proposed):** `alert_events` and finished `notification_jobs` 90 days; daily cleanup task.
+- **No metric tables** (invariant 8).
+- Enum-like `text` columns get `CHECK` constraints in migrations.
