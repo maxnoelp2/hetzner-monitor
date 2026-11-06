@@ -4,7 +4,8 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **planned**. No code exists yet. Crate names and paths below are the target layout for M0.
+> Status: **M0** — the four crates exist; `hm-server` serves `/healthz` and `/readyz` and applies migrations.
+> Everything else below is the target design.
 
 ## Bird's-eye view
 
@@ -45,16 +46,19 @@ One binary, three modes via `HM_MODE`: `all` (default, self-hosted), `api`, `wor
    (`pending → firing → resolved`), writing `alert_events`.
 6. Each notifiable event enqueues `notification_jobs`; the **notifier** sends them with retry/backoff.
 
-## Code map (target)
+## Code map
+
+Packages carry an `hm-` prefix (a package named `core` would shadow Rust's built-in `core` crate);
+directories don't.
 
 ```
 crates/
-  hcloud/   Hetzner Cloud API client. GET only. Pagination via meta.pagination, typed errors,
+  hcloud/   [hm-hcloud] Hetzner Cloud API client. GET only. Pagination via meta.pagination, typed errors,
             rate-limit header capture, metric value parsing (strings → f64). No DB, no domain logic.
-  core/     Domain: check implementations, rule evaluation, alert state machine, label selectors,
+  core/     [hm-core] Domain: check implementations, rule evaluation, alert state machine, label selectors,
             secret envelope encryption, budget maths. Pure where possible → unit-testable without IO.
-  notify/   Channel adapters (email, slack, discord, webhook, ntfy, web push) behind one trait.
-  server/   The binary: Axum API, auth (sessions + API keys), scheduler loop, notifier worker,
+  notify/   [hm-notify] Channel adapters (email, slack, discord, webhook, ntfy, web push) behind one trait.
+  server/   [hm-server → bin `hetzner-monitor`] The binary: Axum API, auth (sessions + API keys), scheduler loop, notifier worker,
             sqlx repositories, CLI subcommands (e.g. `keys rotate`), config loading.
 migrations/ sqlx SQL migrations (source of truth for the schema).
 web/        React PWA (from M6).
@@ -62,8 +66,10 @@ deploy/     docker-compose.yml (app + postgres) and deployment examples.
 docs/       Product, design, ADRs, research, plans.
 ```
 
-Dependency direction: `server → core, notify, hcloud`; `core → hcloud` (types only);
-`notify` and `hcloud` depend on nothing internal. **No crate may depend on `server`.**
+Dependency direction: `hm-server → hm-core, hm-notify, hm-hcloud`; `hm-core → hm-hcloud` (types only);
+`hm-notify` and `hm-hcloud` depend on nothing internal. **No crate may depend on `hm-server`.**
+
+Already in place: `hm_core::secret::Secret<T>` — the redaction wrapper every secret must use.
 
 ## Invariants
 

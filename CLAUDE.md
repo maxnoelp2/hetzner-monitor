@@ -14,7 +14,8 @@ no agent on the servers, no Prometheus stack.
 
 ## Current status
 
-**Pre-code.** Only documentation exists. Next milestone is **M0** (workspace skeleton, Docker Compose, CI).
+**M0 done** — workspace skeleton, migrations, `/healthz` + `/readyz`, Docker Compose, CI. No Hetzner access or
+domain logic yet. Next milestone is **M1** (hcloud client, bootstrap admin, API keys, connect project, inventory sync).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -31,14 +32,20 @@ See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance crite
 
 ## Commands
 
-> Not available yet — they arrive with M0. Update this section when they exist.
+Toolchain is pinned in `rust-toolchain.toml` (rustup installs it automatically).
 
 ```bash
-cargo fmt --all                                   # format
-cargo clippy --all-targets --all-features -- -D warnings   # lint
-cargo test --all                                  # test (needs Postgres, see below)
-docker compose -f deploy/docker-compose.yml up    # run locally
+cargo fmt --all                                            # format
+cargo clippy --all-targets --all-features -- -D warnings   # lint (CI runs the same, plus --locked)
+docker compose -f deploy/docker-compose.yml up -d postgres # Postgres for tests, on 127.0.0.1:55432
+export DATABASE_URL=postgres://hetzner_monitor:hetzner_monitor@127.0.0.1:55432/hetzner_monitor
+cargo test --all                                           # unit + integration tests (#[sqlx::test], fresh DB per test)
+docker compose -f deploy/docker-compose.yml up --build     # full stack: app on http://127.0.0.1:8080
 ```
+
+- Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.
+- New migrations: add `migrations/NNNN_description.sql`; they are embedded and applied on startup.
+- Host ports are configurable via `HM_POSTGRES_PORT` / `HM_PORT` (see `deploy/.env.example`).
 
 ## How to work here
 
