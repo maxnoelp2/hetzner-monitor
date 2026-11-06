@@ -1,6 +1,7 @@
 # Design: Data model (PostgreSQL)
 
-Status: **proposed** · Source of truth once code exists: `migrations/`
+Status: tenancy, API keys, projects, resources **implemented** (`migrations/0001`–`0002`); the rest **proposed**.
+Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
 
@@ -9,15 +10,15 @@ Status: **proposed** · Source of truth once code exists: `migrations/`
 organizations(id uuid pk, name text, created_at)
 users(id uuid pk, email citext unique, name text, password_hash text /* argon2id */, created_at, disabled_at)
 memberships(org_id fk, user_id fk, role text /* owner|admin|member */, pk(org_id, user_id))
-api_keys(id uuid pk, org_id fk, user_id fk, name text, prefix text, key_hash text /* sha256 */,
-         scopes text[], last_used_at, expires_at, created_at)
+api_keys(id uuid pk, org_id fk, user_id fk, name text, prefix text unique /* 12 [a-z0-9] */, key_hash bytea /* sha256 */,
+         scopes text[], last_used_at, expires_at, revoked_at, created_at)
 sessions(id uuid pk, user_id fk, token_hash text, user_agent text, created_at, expires_at)
 
 -- hetzner
 hetzner_projects(
-  id uuid pk, org_id fk, name text,
+  id uuid pk /* app-generated: AAD of the token */, org_id fk, name text unique per org,
   token_ct bytea 🔒, token_dek_ct bytea 🔒, key_version int, token_hint text /* last 4 chars */,
-  status text /* active|invalid_token|degraded|paused */,
+  status text /* active|invalid_token|degraded|paused */, status_message text,
   budget_share real default 0.5,
   rl_limit int, rl_remaining int, rl_reset_at,
   metrics_interval_s int, last_fast_at, last_metrics_at, last_inventory_at,
@@ -62,7 +63,9 @@ push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text
 ## Notes
 
 - **Tenancy:** every tenant table reaches `organizations` via `org_id` or a parent FK. Repositories take an `OrgId` argument — never query tenant data without it.
-- **Bootstrap (self-hosted):** first start creates a default org and an admin (`HM_ADMIN_EMAIL` / `HM_ADMIN_PASSWORD`, or a generated password printed once).
+- **Bootstrap (self-hosted):** `hetzner-monitor bootstrap --org … --email …` creates the first org, an `owner` and an `admin` API key (printed once). No password until login lands (M5).
+- **Resources** have no `org_id`; they are tenant-scoped through `hetzner_projects.org_id` (every query joins it).
+- API keys are revoked by setting `revoked_at` (kept for audit), not deleted.
 - **Retention (proposed):** `alert_events` and finished `notification_jobs` 90 days; daily cleanup task.
 - **No metric tables** (invariant 8).
 - Enum-like `text` columns get `CHECK` constraints in migrations.

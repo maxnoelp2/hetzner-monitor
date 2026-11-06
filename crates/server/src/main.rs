@@ -1,28 +1,64 @@
-//! `hetzner-monitor` binary.
-//!
-//! Commands:
-//! - `hetzner-monitor` / `hetzner-monitor serve` — run the service
-//! - `hetzner-monitor healthcheck` — probe `/healthz` locally (for Docker `HEALTHCHECK`)
+//! `hetzner-monitor` binary. Run `hetzner-monitor --help` for commands.
 
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context;
+use clap::{Parser, Subcommand};
+use hm_core::crypto::MasterKey;
 use hm_server::config::{self, Config};
 use hm_server::http::{AppState, router};
-use hm_server::{db, telemetry};
+use hm_server::{bootstrap, db, telemetry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+/// Monitoring & alerting for Hetzner Cloud.
+#[derive(Parser)]
+#[command(name = "hetzner-monitor", version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run the service (default).
+    Serve,
+    /// Probe `/healthz` on `HM_BIND` (for Docker `HEALTHCHECK`).
+    Healthcheck,
+    /// Create the first organisation, its owner and an admin API key (empty database only).
+    Bootstrap {
+        /// Organisation name.
+        #[arg(long)]
+        org: String,
+        /// Owner e-mail address.
+        #[arg(long)]
+        email: String,
+    },
+    /// Master key utilities.
+    MasterKey {
+        #[command(subcommand)]
+        action: MasterKeyAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum MasterKeyAction {
+    /// Print a new random master key (base64) for `HM_MASTER_KEY`.
+    Generate,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
-    let result = match std::env::args().nth(1).as_deref() {
-        None | Some("serve") => serve().await,
-        Some("healthcheck") => healthcheck().await,
-        Some(other) => Err(anyhow::anyhow!(
-            "unknown command `{other}`; expected `serve` or `healthcheck`"
-        )),
+    let cli = Cli::parse();
+    let result = match cli.command.unwrap_or(Command::Serve) {
+        Command::Serve => serve().await,
+        Command::Healthcheck => healthcheck().await,
+        Command::Bootstrap { org, email } => run_bootstrap(&org, &email).await,
+        Command::MasterKey {
+            action: MasterKeyAction::Generate,
+        } => generate_master_key(),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -47,16 +83,49 @@ async fn serve() -> anyhow::Result<()> {
         .context("failed to apply migrations")?;
     tracing::info!("migrations applied");
 
+    let state = AppState {
+        db: pool.clone(),
+        master_key: config.master_key.clone(),
+        hcloud: hm_hcloud::Client::new().context("failed to build the Hetzner client")?,
+    };
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
-    axum::serve(listener, router(AppState { db: pool.clone() }))
+    axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("HTTP server failed")?;
 
     pool.close().await;
     tracing::info!("stopped");
+    Ok(())
+}
+
+async fn run_bootstrap(org: &str, email: &str) -> anyhow::Result<()> {
+    let database_url = config::database_url_from_env()?;
+    let pool = db::connect(&database_url)
+        .await
+        .context("failed to connect to the database")?;
+    db::migrate(&pool)
+        .await
+        .context("failed to apply migrations")?;
+    let done = bootstrap::run(&pool, org, email).await?;
+    // Operator-facing output on stdout, shown exactly once. Never logged.
+    println!("Bootstrap complete.");
+    println!("  organisation: {} ({})", org.trim(), done.org_id);
+    println!("  owner:        {}", email.trim());
+    println!();
+    println!("Admin API key — shown only once, store it now (e.g. in your password manager):");
+    println!("{}", done.key.full.expose().as_str());
+    Ok(())
+}
+
+fn generate_master_key() -> anyhow::Result<()> {
+    let key = MasterKey::generate_base64()?;
+    println!("{}", key.as_str());
+    eprintln!(
+        "Store this as HM_MASTER_KEY (or in a file for HM_MASTER_KEY_FILE). Losing it makes stored tokens unrecoverable."
+    );
     Ok(())
 }
 
