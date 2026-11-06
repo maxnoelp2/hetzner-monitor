@@ -19,12 +19,12 @@ link the execution plan in `docs/plans/` that delivered them.
 - [ ] CPU metric is per vCPU (100 = one full core) — verify on a real multi-core server.
 - [ ] Traffic billing period — not exposed by the API; confirm the calendar-month assumption.
 
-## M0 checklist
+## M0 checklist — done ([plan](plans/2026-11-06-m0-skeleton.md))
 
-- [ ] Cargo workspace with four crates, edition 2024
-- [ ] `deploy/docker-compose.yml` (app + postgres)
-- [ ] `migrations/0001_init.sql` (organizations, users, memberships)
-- [ ] `GET /healthz`, `GET /readyz`
-- [ ] Multi-stage Dockerfile (rustls, small runtime image)
-- [ ] GitHub Actions: fmt, clippy `-D warnings`, test against Postgres service
-- [ ] Update "Commands" in `CLAUDE.md`
+- [x] Cargo workspace with four crates, edition 2024
+- [x] `deploy/docker-compose.yml` (app + postgres)
+- [x] `migrations/0001_init.sql` (organizations, users, memberships)
+- [x] `GET /healthz`, `GET /readyz`
+- [x] Multi-stage Dockerfile (rustls, small runtime image)
+- [x] GitHub Actions: fmt, clippy `-D warnings`, test against Postgres service
+- [x] Update "Commands" in `CLAUDE.md`

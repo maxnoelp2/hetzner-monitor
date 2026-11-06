@@ -15,4 +15,4 @@ refactor). It lets a human or an agent pick up work mid-way without re-deriving 
 
 | Plan | Status |
 |---|---|
-| *(none yet — first one will be M0)* | |
+| [2026-11-06 — M0 skeleton](2026-11-06-m0-skeleton.md) | Done |

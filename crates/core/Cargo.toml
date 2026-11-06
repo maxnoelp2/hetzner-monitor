@@ -1,0 +1,12 @@
+[package]
+name = "hm-core"
+description = "hetzner-monitor: domain logic (checks, rules, alert state, secrets)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
