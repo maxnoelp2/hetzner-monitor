@@ -19,6 +19,13 @@ link the execution plan in `docs/plans/` that delivered them.
 - [ ] CPU metric is per vCPU (100 = one full core) — verify on a real multi-core server.
 - [ ] Traffic billing period — not exposed by the API; confirm the calendar-month assumption.
 
+## M1 — done ([plan](plans/2026-11-06-m1-connect-inventory.md))
+
+- [x] `hm-hcloud` read-only client (pagination, errors, rate-limit headers)
+- [x] `bootstrap` CLI, API keys with scopes
+- [x] Connect project with envelope-encrypted token, inventory sync, resources API
+- [ ] Real-project smoke test by the owner (`scripts/smoke-m1.sh`)
+
 ## M0 checklist — done ([plan](plans/2026-11-06-m0-skeleton.md))
 
 - [x] Cargo workspace with four crates, edition 2024

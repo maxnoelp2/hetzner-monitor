@@ -2,7 +2,8 @@
 
 Status: **accepted** ([ADR-0004](../adr/0004-own-minimal-hetzner-client.md)) · Crate: `crates/hcloud`
 
-A small, hand-written client (`reqwest` + `serde`, rustls) for the Hetzner Cloud API.
+A small, hand-written client (`reqwest` + `serde`, rustls with the **ring** provider shared with sqlx — no `aws-lc-rs`) for the Hetzner Cloud API.
+**Implemented in M1:** `Client::{new, with_base_url, validate_token, list}`, `Token`, `ResourceKind`, `RawResource { id, name, labels, raw }`, `RateLimit`, `Error`.
 Facts below are **from spec** as of 2026-11-05 ([OpenAPI spec](https://docs.hetzner.cloud/cloud.spec.json)).
 
 ## Scope — GET only
@@ -19,7 +20,7 @@ Write endpoints are **out of scope forever** (invariant 1 in [ARCHITECTURE.md](.
 
 ## Behaviour
 
-- **Auth:** `Authorization: Bearer <token>`. The token type is a wrapper that implements neither `Debug` nor `Display` with the real value.
+- **Auth:** `Authorization: Bearer <token>`. `hm_hcloud::Token` has a redacted `Debug`, no `Display`, wipes memory on drop; `hint()` gives the last 4 chars. The crate depends on no internal crate, so it has its own token type instead of `hm_core::Secret`.
 - **Pagination:** read `meta.pagination` from the body (`page`, `per_page`, `next_page`, `last_page`, `total_entries`); always request `per_page=50` (maximum). **Do not use the `Link` header** — deprecated since the 2026-10-12 changelog entry.
 - **Rate limit:** after every response, capture `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (UNIX ts) and hand them to the caller as part of the result.
 - **Metrics:** values arrive as `[timestamp, "string"]` → parse to `(f64, f64)`. Max 500 samples per response; 30-day retention.

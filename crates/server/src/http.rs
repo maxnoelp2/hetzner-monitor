@@ -1,11 +1,13 @@
-//! HTTP API (Axum). M0 exposes only health endpoints. See `docs/design/api.md`.
+//! HTTP server setup: shared state, router, health endpoints. See `docs/design/api.md`.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
+use hm_core::crypto::MasterKey;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
@@ -17,6 +19,8 @@ const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    pub master_key: Arc<MasterKey>,
+    pub hcloud: hm_hcloud::Client,
 }
 
 /// Builds the application router.
@@ -24,6 +28,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .nest("/api/v1", crate::api::routes())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

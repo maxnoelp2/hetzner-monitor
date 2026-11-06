@@ -1,36 +1,37 @@
-//! Integration tests for the health endpoints and the initial migration.
+//! Integration tests for the health endpoints and the migrations.
 //!
 //! `#[sqlx::test]` creates a fresh database per test from `DATABASE_URL` and applies
 //! `/migrations`. Start Postgres first, e.g. `docker compose -f deploy/docker-compose.yml up -d postgres`.
 
-use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use hm_server::http::{AppState, router};
-use http_body_util::BodyExt;
-use serde_json::Value;
-use sqlx::PgPool;
-use tower::ServiceExt;
+mod common;
 
-async fn get(pool: PgPool, path: &str) -> (StatusCode, Value) {
-    let response = router(AppState { db: pool })
-        .oneshot(Request::get(path).body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let status = response.status();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap())
-}
+use axum::http::StatusCode;
+use sqlx::PgPool;
 
 #[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
 async fn healthz_is_ok(pool: PgPool) {
-    let (status, body) = get(pool, "/healthz").await;
+    let (status, body) = common::call(
+        &common::state(pool, "http://127.0.0.1:9"),
+        "GET",
+        "/healthz",
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
 }
 
 #[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
 async fn readyz_is_ok_when_database_is_reachable(pool: PgPool) {
-    let (status, body) = get(pool, "/readyz").await;
+    let (status, body) = common::call(
+        &common::state(pool, "http://127.0.0.1:9"),
+        "GET",
+        "/readyz",
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
 }
@@ -38,7 +39,14 @@ async fn readyz_is_ok_when_database_is_reachable(pool: PgPool) {
 #[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
 async fn readyz_is_unavailable_when_database_is_gone(pool: PgPool) {
     pool.close().await;
-    let (status, body) = get(pool, "/readyz").await;
+    let (status, body) = common::call(
+        &common::state(pool, "http://127.0.0.1:9"),
+        "GET",
+        "/readyz",
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["status"], "unavailable");
 }
@@ -46,25 +54,41 @@ async fn readyz_is_unavailable_when_database_is_gone(pool: PgPool) {
 #[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
 async fn healthz_does_not_depend_on_the_database(pool: PgPool) {
     pool.close().await;
-    let (status, _) = get(pool, "/healthz").await;
+    let (status, _) = common::call(
+        &common::state(pool, "http://127.0.0.1:9"),
+        "GET",
+        "/healthz",
+        None,
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 }
 
 #[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
-async fn initial_migration_creates_tenancy_tables(pool: PgPool) {
+async fn migrations_create_all_tables(pool: PgPool) {
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT table_name::text FROM information_schema.tables \
-         WHERE table_schema = current_schema() AND table_name IN ('organizations', 'users', 'memberships') \
-         ORDER BY table_name",
+         WHERE table_schema = current_schema() AND table_name <> '_sqlx_migrations' ORDER BY table_name",
     )
     .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(tables, ["memberships", "organizations", "users"]);
+    assert_eq!(
+        tables,
+        [
+            "api_keys",
+            "hetzner_projects",
+            "memberships",
+            "organizations",
+            "resources",
+            "users"
+        ]
+    );
 }
 
 #[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
-async fn membership_role_is_constrained(pool: PgPool) {
+async fn membership_role_and_email_are_constrained(pool: PgPool) {
     let org: String = sqlx::query_scalar(
         "INSERT INTO organizations (name) VALUES ('Default') RETURNING id::text",
     )
@@ -77,7 +101,6 @@ async fn membership_role_is_constrained(pool: PgPool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-
     let invalid = sqlx::query(
         "INSERT INTO memberships (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'superuser')",
     )
@@ -89,8 +112,6 @@ async fn membership_role_is_constrained(pool: PgPool) {
         invalid.is_err(),
         "role outside owner|admin|member must be rejected"
     );
-
-    // citext: e-mail uniqueness is case-insensitive.
     let duplicate = sqlx::query("INSERT INTO users (email) VALUES ('admin@example.com')")
         .execute(&pool)
         .await;

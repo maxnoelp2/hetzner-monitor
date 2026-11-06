@@ -14,8 +14,9 @@ no agent on the servers, no Prometheus stack.
 
 ## Current status
 
-**M0 done** — workspace skeleton, migrations, `/healthz` + `/readyz`, Docker Compose, CI. No Hetzner access or
-domain logic yet. Next milestone is **M1** (hcloud client, bootstrap admin, API keys, connect project, inventory sync).
+**M1 done** — bootstrap CLI, API keys, envelope-encrypted Hetzner tokens, read-only `hm-hcloud` client,
+connect project + inventory sync via `/api/v1`. No scheduler, rules or alerts yet. Next milestone is **M2**
+(scheduler with 3 tiers and budget, rule engine, alert lifecycle, first checks).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -40,12 +41,19 @@ cargo clippy --all-targets --all-features -- -D warnings   # lint (CI runs the s
 docker compose -f deploy/docker-compose.yml up -d postgres # Postgres for tests, on 127.0.0.1:55432
 export DATABASE_URL=postgres://hetzner_monitor:hetzner_monitor@127.0.0.1:55432/hetzner_monitor
 cargo test --all                                           # unit + integration tests (#[sqlx::test], fresh DB per test)
-docker compose -f deploy/docker-compose.yml up --build     # full stack: app on http://127.0.0.1:8080
+cargo test -p hm-hcloud -- --ignored live_                 # live TLS check against api.hetzner.cloud (fake token)
+
+# full stack (needs HM_MASTER_KEY in deploy/.env, see deploy/.env.example)
+docker compose -f deploy/docker-compose.yml up --build -d                       # app on http://127.0.0.1:8080
+docker compose -f deploy/docker-compose.yml run --rm app bootstrap --org <name> --email <email>  # prints admin key once
+scripts/smoke-m1.sh                                        # real-project smoke test (HCLOUD_TOKEN, HM_API_KEY from env)
 ```
 
 - Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.
 - New migrations: add `migrations/NNNN_description.sql`; they are embedded and applied on startup.
 - Host ports are configurable via `HM_POSTGRES_PORT` / `HM_PORT` (see `deploy/.env.example`).
+- sqlx 0.9 rejects dynamically built SQL strings: write queries as literals (use `concat!` with a macro for shared column lists).
+- Tests use `tests/common/mod.rs`: `state()` with a fixed test master key and a wiremock Hetzner, `org_with_key()`, `call()`.
 
 ## How to work here
 
