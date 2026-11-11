@@ -24,7 +24,7 @@ link the execution plan in `docs/plans/` that delivered them.
 - [x] `hm-hcloud` read-only client (pagination, errors, rate-limit headers)
 - [x] `bootstrap` CLI, API keys with scopes
 - [x] Connect project with envelope-encrypted token, inventory sync, resources API
-- [ ] Real-project smoke test by the owner (`scripts/smoke-m1.sh`)
+- [x] Real-project smoke test by the owner (`scripts/smoke-m1.sh`)
 
 ## M0 checklist — done ([plan](plans/2026-11-06-m0-skeleton.md))
 

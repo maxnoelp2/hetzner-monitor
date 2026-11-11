@@ -1,6 +1,6 @@
 # Plan: M1 — hcloud client, bootstrap, API keys, connect project, inventory sync
 
-- Status: In progress — implementation done, waiting for the owner's real-project smoke test
+- Status: Done
 - Milestone: M1
 - Owner: Claude (agent), reviewed by Max Nölp
 - Started: 2026-11-06
@@ -23,7 +23,7 @@ No scheduler, rules or alerts yet — sync runs on connect and on demand.
 - [x] `POST /api/v1/projects/{id}/sync` re-syncs: new resources appear, vanished ones get `deleted_at`, reappearing ones are revived.
 - [x] **Tenant isolation:** a key of org A gets `404` for org B's project, resources and sync.
 - [x] `RateLimit-*` values from the last Hetzner response are stored on the project and shown in `GET /projects/{id}`.
-- [ ] **Real-project smoke test** (`scripts/smoke-m1.sh`, run by Max with his own read token): connect → inventory matches the Hetzner Console; token appears nowhere in logs or output.
+- [x] **Real-project smoke test** (`scripts/smoke-m1.sh`, run by Max with his own read token): connect → inventory matches the Hetzner Console; token appears nowhere in logs or output.
 - [x] fmt, clippy `-D warnings`, all tests green locally and in CI; no OpenSSL; docs updated.
 
 ## Context
@@ -80,7 +80,7 @@ Hetzner facts from the [OpenAPI spec](https://docs.hetzner.cloud/cloud.spec.json
         (never as arguments, never echoed), connects a project against the local stack, prints resource counts per kind.
 12. [x] **Docs** — CLAUDE.md (status, bootstrap/smoke commands), configuration (`HM_MASTER_KEY*`), data-model (as built),
         api (implemented endpoints), hcloud-client (ring provider, `RawResource`), roadmap ticks, this plan.
-13. [ ] **Verify** — all acceptance criteria; Max runs the smoke test against his test project; record results; open PR.
+13. [x] **Verify** — all acceptance criteria; Max runs the smoke test against his test project; record results; open PR.
 
 ## Dependencies (new crates — justification)
 
@@ -131,10 +131,11 @@ Exact patch versions re-checked when added. No `argon2` yet — passwords arrive
 | TLS to the real API from the distroless image | ✅ fake token → `422 invalid_token` from `api.hetzner.cloud`; also `cargo test -p hm-hcloud -- --ignored live_` |
 | No secrets in logs | ✅ app logs contain neither the fake Hetzner token nor `hm_` keys |
 | fmt / clippy `-D warnings` / tests / no OpenSSL / no aws-lc-rs | ✅ 37 tests (+1 ignored live test) |
-| **Real-project smoke test** | ⏳ owner runs `scripts/smoke-m1.sh` |
+| **Real-project smoke test** | ✅ 2026-11-11, owner's production project via `scripts/smoke-m1.sh`: connect → `active`, 9 servers + 16 primary IPs (0 LB / volume / certificate / floating IP) synced; rate limit 3593/3600 after connect; token neither in API response nor app logs; project deleted afterwards |
 
 ## Progress log
 
 - 2026-11-06 — Plan drafted. Decided to share `ring` with sqlx instead of reqwest's default `aws-lc-rs`; defer passwords/argon2 to M5; bootstrap via CLI.
 - 2026-11-06 — Implemented. Deviations: (1) `hm-hcloud` has its own redacted `Token` type — the crate may not depend on `hm-core` (ARCHITECTURE dependency rule). (2) sqlx 0.9 rejects dynamic SQL strings; shared column lists use `concat!` + a macro. (3) `api_keys.revoked_at` added (revocation keeps the row for audit). (4) `hetzner_projects.status_message` added for the last Hetzner error. (5) Workspace allows `clippy::must_use_candidate` (pedantic noise). (6) Compose no longer enforces `HM_MASTER_KEY` via `${…:?}` — that broke `down`/`logs`; the app itself refuses to start without it. (7) reqwest built with `default-features = false` + `rustls-no-provider` + ring: verified no `aws-lc-rs` in the tree.
 - 2026-11-06 — Verified by hand in Docker: healthy, bootstrap, second bootstrap refused, 401 without key, 200 with key, live TLS to Hetzner (fake token → 422). Stack torn down with `-v` so the owner starts fresh.
+- 2026-11-11 — Owner ran the real-project smoke test: passed (see Result). Found on the way: (1) the script's f-strings used `\"` inside `{…}`, which only Python ≥ 3.12 accepts — macOS ships 3.9; rewritten with `str.format`. (2) Starting the stack once without `deploy/.env` initialises Postgres with the default password; a later `.env` with another `HM_POSTGRES_PASSWORD` then fails with `password authentication failed` until the volume is recreated (`down -v`) — documented in configuration.md. Primary IPs carry Hetzner's default names (`primary_ip-<id>`), as expected.

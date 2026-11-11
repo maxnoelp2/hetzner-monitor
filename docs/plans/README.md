@@ -16,4 +16,4 @@ refactor). It lets a human or an agent pick up work mid-way without re-deriving 
 | Plan | Status |
 |---|---|
 | [2026-11-06 — M0 skeleton](2026-11-06-m0-skeleton.md) | Done |
-| [2026-11-06 — M1 connect & inventory](2026-11-06-m1-connect-inventory.md) | In progress (smoke test) |
+| [2026-11-06 — M1 connect & inventory](2026-11-06-m1-connect-inventory.md) | Done |
