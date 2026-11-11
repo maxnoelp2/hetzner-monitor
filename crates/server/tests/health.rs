@@ -77,11 +77,14 @@ async fn migrations_create_all_tables(pool: PgPool) {
     assert_eq!(
         tables,
         [
+            "alert_events",
+            "alerts",
             "api_keys",
             "hetzner_projects",
             "memberships",
             "organizations",
             "resources",
+            "rules",
             "users"
         ]
     );

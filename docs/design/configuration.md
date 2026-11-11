@@ -8,7 +8,7 @@ Source: `crates/server/src/config.rs`.
 | `HM_DATABASE_URL` | yes | — | M0 | Postgres connection string |
 | `HM_MASTER_KEY` / `HM_MASTER_KEY_FILE` | yes (exactly one) | — | M1 | 32-byte base64 master key ([security](security.md)) |
 | `HM_MASTER_KEYS` | no | — | planned | Versioned keys for rotation (proposed format: `1:<b64>,2:<b64>`) |
-| `HM_MODE` | no | `all` | M0 (parsed, logged) | `all` \| `api` \| `worker` |
+| `HM_MODE` | no | `all` | M2 | `all` (API + scheduler) \| `api` (no scheduler) \| `worker` (scheduler; still serves `/healthz`, `/readyz`, API) |
 | `HM_BIND` | no | `0.0.0.0:8080` | M0 | HTTP listen address |
 | `HM_BASE_URL` | no | — | planned | Public URL (links in notifications, cookies) |
 | `HM_SMTP_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_FROM` | for email | — | planned | SMTP settings |

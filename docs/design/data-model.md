@@ -1,6 +1,6 @@
 # Design: Data model (PostgreSQL)
 
-Status: tenancy, API keys, projects, resources **implemented** (`migrations/0001`–`0002`); the rest **proposed**.
+Status: tenancy, API keys, projects, resources, rules, alerts, alert events **implemented** (`migrations/0001`–`0003`); the rest **proposed**.
 Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
@@ -22,6 +22,8 @@ hetzner_projects(
   budget_share real default 0.5,
   rl_limit int, rl_remaining int, rl_reset_at,
   metrics_interval_s int, last_fast_at, last_metrics_at, last_inventory_at,
+  next_fast_at, next_inventory_at, lease_until /* scheduler lease */, failures int /* consecutive */,
+  budget_h int, fixed_h int,
   created_at)
 
 resources(
@@ -34,14 +36,16 @@ resources(
 -- alerting
 rules(
   id uuid pk, org_id fk, project_id fk null /* null = all projects of the org */,
-  name text, check_type text, params jsonb, selector text null, resource_id fk null,
+  name text, check_type text /* server_status|resource_lifecycle|lb_target_health|traffic_quota|hetzner_api */,
+  params jsonb, selector text null, resource_id fk null,
   severity text /* info|warning|critical */, enabled bool, is_default bool,
   renotify_s int default 14400, created_at, updated_at)
 
 alerts(
   id uuid pk, rule_id fk, resource_id fk null, project_id fk,
   state text /* pending|firing|resolved */, severity text, value double precision, message text,
-  pending_since, fired_at, resolved_at, last_notified_at, acked_by fk null, acked_at)
+  ok_cycles int /* flapping guard */, pending_since, fired_at, resolved_at, last_notified_at,
+  acked_by fk null, acked_at, updated_at)
   -- partial unique: (rule_id, coalesce(resource_id, nil-uuid)) where state <> 'resolved'
 
 alert_events(id bigserial pk, alert_id fk, type text /* pending|fired|resolved|acked|renotified|suppressed */,

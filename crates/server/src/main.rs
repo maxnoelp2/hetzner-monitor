@@ -7,9 +7,9 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use hm_core::crypto::MasterKey;
-use hm_server::config::{self, Config};
+use hm_server::config::{self, Config, Mode};
 use hm_server::http::{AppState, router};
-use hm_server::{bootstrap, db, telemetry};
+use hm_server::{bootstrap, db, scheduler, telemetry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -91,11 +91,19 @@ async fn serve() -> anyhow::Result<()> {
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
+
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let scheduler = matches!(config.mode, Mode::All | Mode::Worker)
+        .then(|| tokio::spawn(scheduler::run(state.clone(), stop_rx)));
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("HTTP server failed")?;
 
+    let _ = stop_tx.send(true);
+    if let Some(handle) = scheduler {
+        let _ = handle.await;
+    }
     pool.close().await;
     tracing::info!("stopped");
     Ok(())

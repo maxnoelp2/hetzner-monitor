@@ -21,6 +21,7 @@ hm-core.workspace = true
 hm-hcloud.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+getrandom.workspace = true
 serde.workspace = true
 time.workspace = true
 uuid.workspace = true

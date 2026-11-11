@@ -4,7 +4,8 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M0** — the four crates exist; `hm-server` serves `/healthz` and `/readyz` and applies migrations.
+> Status: **M2** — API keys, encrypted tokens, `hcloud` client, scheduler (fast + inventory tiers, budget, leases),
+> rule engine and alert lifecycle are implemented. Not yet: metrics tier (M3), notifier and channels (M4).
 > Everything else below is the target design.
 
 ## Bird's-eye view

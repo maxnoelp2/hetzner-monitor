@@ -17,3 +17,4 @@ refactor). It lets a human or an agent pick up work mid-way without re-deriving 
 |---|---|
 | [2026-11-06 — M0 skeleton](2026-11-06-m0-skeleton.md) | Done |
 | [2026-11-06 — M1 connect & inventory](2026-11-06-m1-connect-inventory.md) | Done |
+| [2026-11-11 — M2 scheduler, rules & alerts](2026-11-11-m2-scheduler-rules-alerts.md) | Done (real power-off test skipped) |

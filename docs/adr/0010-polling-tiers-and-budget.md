@@ -1,6 +1,6 @@
 # ADR-0010: Three polling tiers with an adaptive rate-limit budget
 
-- Status: Proposed
+- Status: Accepted (implemented in M2, 2026-11-11)
 - Date: 2026-11-05
 - Deciders: Max Nölp
 

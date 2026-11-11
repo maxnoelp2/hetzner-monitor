@@ -1,6 +1,6 @@
 # Design: HTTP API
 
-Status: endpoints marked ✅ are **implemented** (M1); the rest **proposed** · Crate: `crates/server`
+Status: endpoints marked ✅ are **implemented** (M1, M2); the rest **proposed** · Crate: `crates/server`
 
 REST under `/api/v1`, JSON. The OpenAPI document is **generated from code** (`utoipa`) and served at
 `/api/v1/openapi.json`; the PWA's TypeScript client is generated from it.
@@ -8,11 +8,12 @@ REST under `/api/v1`, JSON. The OpenAPI document is **generated from code** (`ut
 ```
 POST   /auth/login · POST /auth/logout · GET /me
 ✅ GET  /projects · ✅ POST /projects {name, token} → 201 {project, sync} · ✅ GET/DELETE /projects/{id} · PATCH /projects/{id}
-✅ POST /projects/{id}/sync           → re-sync inventory now → {sync, project}
+✅ POST /projects/{id}/sync           → re-sync inventory now (any status; 409 while a cycle runs) → {sync, project}
 ✅ GET  /projects/{id}/resources?kind= → inventory (server|load_balancer|volume|certificate|floating_ip|primary_ip)
 GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later graphs; budgeted)
-GET    /rules · POST /rules · PATCH/DELETE /rules/{id}
-GET    /alerts?state=firing · POST /alerts/{id}/ack
+✅ GET /rules?project_id= · ✅ GET /rules/{id} · ✅ PATCH /rules/{id} {name?, enabled?, params?, severity?, selector?} · POST /rules · DELETE /rules/{id}
+✅ GET /alerts?state=open|pending|firing|resolved&project_id=&page=&per_page= → {alerts, meta.pagination} · ✅ GET /alerts/{id} → {alert, events}
+POST   /alerts/{id}/ack
 GET    /channels · POST /channels · POST /channels/{id}/test
 GET    /silences · POST /silences · DELETE /silences/{id}
 ✅ GET /api-keys · ✅ POST /api-keys {name, scopes} → 201 {api_key, key} (key shown once) · ✅ DELETE /api-keys/{id} (revoke)
@@ -27,6 +28,10 @@ GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metr
 - IDs are UUIDs; Hetzner IDs appear only as `hetzner_id`.
 - Secrets are write-only: accepted on create/update, never returned.
 - Scopes: `read` for GET, `write` for project changes and sync, `admin` for API keys. `admin ⊃ write ⊃ read`.
+- Project responses include the schedule and budget: `failures`, `last_fast_at`, `next_fast_at`, `next_inventory_at`,
+  `budget_share`, `budget_h`, `fixed_h`, `metrics_interval_s` ([scheduler](scheduler.md)).
+- `PATCH /rules/{id}`: `selector: null` or `""` clears the selector; params are validated per check; unknown fields → 400.
+  Rules are writable with the `write` scope.
 - Implemented error codes: `unauthorized` (401), `forbidden` (403), `not_found` (404, also for other tenants' ids and malformed ids),
-  `bad_request` (400), `name_taken` (409), `invalid_token` (422, connect), `hetzner_invalid_token` / `hetzner_unavailable` (502),
+  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `invalid_token` (422, connect), `hetzner_invalid_token` / `hetzner_unavailable` (502),
   `hetzner_rate_limited` (503), `internal` (500).
