@@ -1,6 +1,6 @@
 # Design: Scheduler & rate-limit budget
 
-Status: fast and inventory tiers, budget maths, error handling and leases **implemented** (M2); metrics tier **proposed** (M3) · [ADR-0010](../adr/0010-polling-tiers-and-budget.md) · Crates: `crates/server` (`scheduler`, `cycle`), `crates/core` (`budget`)
+Status: fast and inventory tiers, budget maths, error handling and leases **implemented** (M2); metrics tier **implemented** (M3a), load balancer metrics **proposed** · [ADR-0010](../adr/0010-polling-tiers-and-budget.md) · Crates: `crates/server` (`scheduler`, `cycle`), `crates/core` (`budget`)
 
 ## Problem
 
@@ -13,7 +13,7 @@ everything else the user runs (Terraform, CI, CLI). Metrics cost **one request p
 | Tier | Requests | Cost per cycle | Cadence |
 |---|---|---|---|
 | **fast** | `GET /servers` (status, `locked`, traffic, labels), `GET /load_balancers` (target health; skipped while the project has none) | ⌈N/50⌉ + ⌈L/50⌉ | fixed 60 s (+ 0–5 s jitter) |
-| **metrics** | `GET /servers/{id}/metrics?type=cpu,disk,network` per server (+ LB metrics) | N (+ L) | **adaptive**, ≥ 60 s |
+| **metrics** | `GET /servers/{id}/metrics?type=…` per server **in scope of an enabled metric rule**, only the families those rules need (LB metrics: later) | N_metrics | **adaptive**, ≥ 60 s (+ 0–5 s jitter) |
 | **inventory** | all six resource kinds (M2); server types and pricing follow with the checks that need them | ~6–10 | 15 min |
 
 Status changes are detected within ~1 minute regardless of project size; only utilisation alerts slow down for large projects.
@@ -28,11 +28,16 @@ metrics_int_s = max(60, ceil(N_metrics × 3600 / (budget_h − fixed_h)))
 
 Example, 100 servers: fast = 2 × 60 = 120/h, inventory ≈ 40/h → 1640/h left → metrics every ⌈100·3600/1640⌉ = **220 s**.
 
-If `budget_h − fixed_h ≤ 0`, metrics are paused for the project and a system alert explains why.
+If `budget_h − fixed_h ≤ 0`, metrics are paused for the project (`metrics_interval_s` = `null`); a system alert explaining it is **planned**.
 
 An empty list still costs one request, so every inventory listing counts at least 1.
-`GET /projects/{id}` shows `budget_h`, `fixed_h`, `metrics_interval_s` (planned interval until the metrics
-tier lands in M3; `null` = paused), `next_fast_at` and `next_inventory_at`.
+`N_metrics` counts only servers covered by an enabled metric rule (`cpu`, `network`, `disk_io`); with none, the metrics
+tier does not run at all and `next_metrics_at` is `null`. Disabling the default `cpu` rule therefore stops all metric requests.
+`GET /projects/{id}` shows `budget_h`, `fixed_h`, `metrics_interval_s` (`null` = no metric rule in scope, or paused),
+`next_fast_at`, `next_inventory_at`, `last_metrics_at` and `next_metrics_at`.
+
+**Order:** a claim runs every due tier in a row under one lease — inventory (which includes the fast tier's data) or
+fast, then metrics — and releases the lease at the end. A failing tier stops the rest; its backoff postpones all tiers.
 
 ## Safeguards
 
@@ -56,8 +61,13 @@ A cycle — fetch, `resources` update, schedule, rule evaluation — commits in 
 
 ## Metric query window
 
-`start = now − max(interval, longest rule duration in scope) − 2 min`, `step = 60`.
-Rule durations ("CPU > 90 % for 10 min") are evaluated directly on the returned series — **no local time-series storage** (invariant 8).
+`start = now − max(interval, longest rule duration in scope) − 2 min`, `end = now`, `step = 60` (`hm_core::series::window`).
+Rule durations ("CPU > 90 % for 10 min") are evaluated directly on the returned series — **no local time-series storage** (invariant 8):
+
+- The trailing run of samples meeting the condition counts one `step` per sample (Hetzner may return a coarser step than requested; the returned one is used).
+- A gap larger than 2 × step ends the run. No samples, or a newest sample older than `max(3 × step, 5 min)` (e.g. a powered-off server), means **no data**, which never fires.
+- The measured duration goes into the alert state machine (`held_s`), so restarts or late cycles neither delay nor fake a firing.
+- A server deleted since the last inventory answers `404`; it is skipped, not counted as a failure.
 
 ## Concurrency
 

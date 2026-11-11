@@ -11,7 +11,8 @@ POST   /auth/login · POST /auth/logout · GET /me
 ✅ POST /projects/{id}/sync           → re-sync inventory now (any status; 409 while a cycle runs) → {sync, project}
 ✅ GET  /projects/{id}/resources?kind= → inventory (server|load_balancer|volume|certificate|floating_ip|primary_ip)
 GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later graphs; budgeted)
-✅ GET /rules?project_id= · ✅ GET /rules/{id} · ✅ PATCH /rules/{id} {name?, enabled?, params?, severity?, selector?} · POST /rules · DELETE /rules/{id}
+✅ GET /rules?project_id= · ✅ GET /rules/{id} · ✅ PATCH /rules/{id} {name?, enabled?, params?, severity?, selector?}
+✅ POST /rules {project_id?, name, check_type, params?, severity, selector?, resource_id?, enabled?} → 201 {rule} · ✅ DELETE /rules/{id} (custom rules only)
 ✅ GET /alerts?state=open|pending|firing|resolved&project_id=&page=&per_page= → {alerts, meta.pagination} · ✅ GET /alerts/{id} → {alert, events}
 POST   /alerts/{id}/ack
 GET    /channels · POST /channels · POST /channels/{id}/test
@@ -29,9 +30,12 @@ GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metr
 - Secrets are write-only: accepted on create/update, never returned.
 - Scopes: `read` for GET, `write` for project changes and sync, `admin` for API keys. `admin ⊃ write ⊃ read`.
 - Project responses include the schedule and budget: `failures`, `last_fast_at`, `next_fast_at`, `next_inventory_at`,
-  `budget_share`, `budget_h`, `fixed_h`, `metrics_interval_s` ([scheduler](scheduler.md)).
+  `last_metrics_at`, `next_metrics_at`, `budget_share`, `budget_h`, `fixed_h`, `metrics_interval_s` ([scheduler](scheduler.md)).
 - `PATCH /rules/{id}`: `selector: null` or `""` clears the selector; params are validated per check; unknown fields → 400.
+- `POST /rules`: `project_id` must be a project of the org (omit = all projects of the org); `resource_id` needs `project_id`
+  and must belong to it; `hetzner_api` cannot be created (one system rule per project). Deleting a rule deletes its alerts;
+  default rules → `409 default_rule` (disable them instead).
   Rules are writable with the `write` scope.
 - Implemented error codes: `unauthorized` (401), `forbidden` (403), `not_found` (404, also for other tenants' ids and malformed ids),
-  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `invalid_token` (422, connect), `hetzner_invalid_token` / `hetzner_unavailable` (502),
+  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `invalid_token` (422, connect), `hetzner_invalid_token` / `hetzner_unavailable` (502),
   `hetzner_rate_limited` (503), `internal` (500).

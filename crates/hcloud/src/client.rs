@@ -5,7 +5,12 @@ use reqwest::header::{AUTHORIZATION, HeaderMap};
 use serde_json::{Map, Value};
 
 use crate::error::Error;
-use crate::model::{Listed, RateLimit, RawResource, ResourceKind, Token};
+use std::collections::BTreeMap;
+
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
+
+use crate::model::{Listed, MetricType, Metrics, RateLimit, RawResource, ResourceKind, Token};
 
 /// Production API base URL.
 pub const DEFAULT_BASE_URL: &str = "https://api.hetzner.cloud/v1";
@@ -82,6 +87,36 @@ impl Client {
             }
         }
         Ok(Listed { items, rate_limit })
+    }
+
+    /// Metric series of one server between `start` and `end` (UTC), at about `step_s` seconds
+    /// resolution (Hetzner may coarsen it to stay within 500 samples).
+    pub async fn server_metrics(
+        &self,
+        token: &Token,
+        server_id: i64,
+        types: &[MetricType],
+        start: OffsetDateTime,
+        end: OffsetDateTime,
+        step_s: u32,
+    ) -> Result<Metrics, Error> {
+        if types.is_empty() {
+            return Err(Error::Decode("no metric type requested".to_owned()));
+        }
+        let format = |t: OffsetDateTime| {
+            t.to_offset(time::UtcOffset::UTC)
+                .format(&Rfc3339)
+                .map_err(|e| Error::Decode(e.to_string()))
+        };
+        let kinds: Vec<&str> = types.iter().map(|t| t.as_str()).collect();
+        let query = format!(
+            "servers/{server_id}/metrics?type={}&start={}&end={}&step={step_s}",
+            kinds.join(","),
+            format(start)?,
+            format(end)?
+        );
+        let (body, rate_limit) = self.get_json(token, &query).await?;
+        parse_metrics(&body, rate_limit)
     }
 
     /// The only request method of this crate: authenticated `GET`.
@@ -179,4 +214,40 @@ fn raw_resource(item: &Value) -> Result<RawResource, Error> {
             .unwrap_or_else(Map::new),
         raw: item.clone(),
     })
+}
+
+fn parse_metrics(body: &Value, rate_limit: RateLimit) -> Result<Metrics, Error> {
+    let metrics = body
+        .get("metrics")
+        .ok_or_else(|| Error::Decode("missing `metrics` object".to_owned()))?;
+    let step = metrics.get("step").and_then(Value::as_f64).unwrap_or(60.0);
+    let mut series = BTreeMap::new();
+    if let Some(all) = metrics.get("time_series").and_then(Value::as_object) {
+        for (name, entry) in all {
+            let mut samples: Vec<(f64, f64)> = entry
+                .get("values")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(sample).collect())
+                .unwrap_or_default();
+            samples.sort_by(|a, b| a.0.total_cmp(&b.0));
+            series.insert(name.clone(), samples);
+        }
+    }
+    Ok(Metrics {
+        step,
+        series,
+        rate_limit,
+    })
+}
+
+/// `[timestamp, "value"]` → `(ts, value)`; anything else (or a non-finite value) is dropped.
+fn sample(value: &Value) -> Option<(f64, f64)> {
+    let pair = value.as_array()?;
+    let ts = pair.first()?.as_f64()?;
+    let raw = pair.get(1)?;
+    let v = match raw {
+        Value::String(s) => s.trim().parse::<f64>().ok()?,
+        other => other.as_f64()?,
+    };
+    (ts.is_finite() && v.is_finite()).then_some((ts, v))
 }

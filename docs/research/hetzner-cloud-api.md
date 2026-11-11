@@ -31,7 +31,7 @@ Params: `type` (`cpu`, `disk`, `network`, comma-combinable), `start`, `end`, `st
 
 | Type | Series | Unit |
 |---|---|---|
-| cpu | `cpu` | percent **per vCPU** (100 = one core) |
+| cpu | `cpu` | percent **per vCPU** (100 = one core; stated explicitly in the spec, re-checked 2026-11-11) |
 | disk | `disk.0.iops.read/write`, `disk.0.bandwidth.read/write` | iop/s, bytes/s |
 | network | `network.0.pps.in/out`, `network.0.bandwidth.in/out` | packets/s, bytes/s (public interface only) |
 
@@ -73,3 +73,10 @@ Without an agent: **RAM usage, disk fill level**, processes/services, logs, priv
 | [Netdata](https://www.netdata.cloud/monitoring/hetzner) etc. | agent | not Hetzner-aware (quota, certs, deprecations) |
 | [TigerOps](https://tigerops-site.pages.dev/integrations/hetzner-cloud) | commercial SaaS | paid, generic focus (vendor page) |
 | StatusGator, IncidentHub | Hetzner status pages | monitor Hetzner itself, not your servers |
+
+## Traffic billing (Hetzner docs, 2026-11-11)
+
+From the [billing FAQ](https://docs.hetzner.com/cloud/billing/faq/): only **outgoing** traffic is billed (incoming and
+internal traffic are free); overage is billed in 100 MB blocks; invoices cover full calendar months after the first one;
+the project owner gets Hetzner's own notice at 75 % and 100 % of the included traffic. **Not stated:** when the
+`outgoing_traffic` counter resets — the calendar-month assumption stays an assumption.

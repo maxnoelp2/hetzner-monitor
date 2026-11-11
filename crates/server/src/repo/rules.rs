@@ -100,6 +100,64 @@ pub async fn get(
     .await
 }
 
+/// A new custom rule (`is_default = false`).
+pub struct NewRule<'a> {
+    pub project_id: Option<Uuid>,
+    pub name: &'a str,
+    pub check_type: &'a str,
+    pub params: &'a Value,
+    pub selector: Option<&'a str>,
+    pub resource_id: Option<Uuid>,
+    pub severity: &'a str,
+    pub enabled: bool,
+}
+
+/// Inserts a custom rule. The caller has checked that `project_id` and `resource_id` belong to `org`.
+pub async fn insert(db: &PgPool, org: OrgId, rule: &NewRule<'_>) -> Result<RuleView, sqlx::Error> {
+    sqlx::query_as(concat!(
+        "INSERT INTO rules (org_id, project_id, name, check_type, params, selector, resource_id, severity, enabled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING ",
+        columns!()
+    ))
+    .bind(org.0)
+    .bind(rule.project_id)
+    .bind(rule.name)
+    .bind(rule.check_type)
+    .bind(Json(rule.params))
+    .bind(rule.selector)
+    .bind(rule.resource_id)
+    .bind(rule.severity)
+    .bind(rule.enabled)
+    .fetch_one(db)
+    .await
+}
+
+/// Outcome of [`delete`].
+pub enum Deleted {
+    Ok,
+    NotFound,
+    /// Default rules can be disabled but not deleted.
+    IsDefault,
+}
+
+/// Deletes a custom rule of this org (its alerts go with it).
+pub async fn delete(db: &PgPool, org: OrgId, id: Uuid) -> Result<Deleted, sqlx::Error> {
+    let deleted = sqlx::query("DELETE FROM rules WHERE id = $1 AND org_id = $2 AND NOT is_default")
+        .bind(id)
+        .bind(org.0)
+        .execute(db)
+        .await?
+        .rows_affected();
+    if deleted == 1 {
+        return Ok(Deleted::Ok);
+    }
+    Ok(if get(db, org, id).await?.is_some() {
+        Deleted::IsDefault
+    } else {
+        Deleted::NotFound
+    })
+}
+
 /// Change of an optional field.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum Change<T> {

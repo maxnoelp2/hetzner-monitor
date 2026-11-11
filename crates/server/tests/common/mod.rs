@@ -151,6 +151,7 @@ pub async fn mock_unauthorized(server: &MockServer) {
 pub fn server_json(id: i64, name: &str, status: &str) -> Value {
     json!({
         "id": id, "name": name, "status": status, "labels": { "env": "test" },
+        "server_type": { "name": "cx22", "cores": 2 },
         "outgoing_traffic": 0, "ingoing_traffic": 0, "included_traffic": 20_000_000_000_000_u64
     })
 }
@@ -201,6 +202,28 @@ pub async fn mock_failure(server: &MockServer, status: u16, code: &str, reset_at
     }
     Mock::given(method("GET"))
         .respond_with(response)
+        .mount(server)
+        .await;
+}
+
+/// Mounts a metrics response for server `id`: one series `name` with one sample per minute,
+/// the last one at `end` (UNIX seconds). Mount after `mock_project`, which resets all mocks.
+pub async fn mock_series(server: &MockServer, id: i64, name: &str, end: i64, values: &[f64]) {
+    let n = values.len();
+    let samples: Vec<Value> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let ts = end - 60 * i64::try_from(n - 1 - i).unwrap();
+            json!([ts, v.to_string()])
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!("/servers/{id}/metrics")))
+        .respond_with(ok_json(json!({ "metrics": {
+            "start": "2026-01-01T00:00:00Z", "end": "2026-01-01T00:00:00Z", "step": 60,
+            "time_series": { name: { "values": samples } }
+        }})))
         .mount(server)
         .await;
 }

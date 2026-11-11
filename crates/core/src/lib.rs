@@ -11,3 +11,4 @@ pub mod checks;
 pub mod crypto;
 pub mod secret;
 pub mod selector;
+pub mod series;

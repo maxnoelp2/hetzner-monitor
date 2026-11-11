@@ -2,12 +2,15 @@
 //! snapshot (the JSON object as returned by the API) and its rule params, and returns an
 //! [`Outcome`]. Field shapes follow the Hetzner `OpenAPI` spec (verified 2026-11-11).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::str::FromStr;
 
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+
+use crate::series;
 
 /// Upper bound for durations in params (one day).
 const MAX_DURATION_S: u64 = 86_400;
@@ -25,15 +28,24 @@ pub enum CheckType {
     TrafficQuota,
     /// The project's Hetzner API access is degraded or the token is invalid (system alert).
     HetznerApi,
+    /// CPU usage (normalised by vCPUs) above a threshold for a duration — metrics tier.
+    Cpu,
+    /// Public network bandwidth or packets above a threshold for a duration — metrics tier.
+    Network,
+    /// Disk IOPS or bandwidth above a threshold for a duration — metrics tier.
+    DiskIo,
 }
 
 impl CheckType {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 8] = [
         Self::ServerStatus,
         Self::ResourceLifecycle,
         Self::LbTargetHealth,
         Self::TrafficQuota,
         Self::HetznerApi,
+        Self::Cpu,
+        Self::Network,
+        Self::DiskIo,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -43,6 +55,30 @@ impl CheckType {
             Self::LbTargetHealth => "lb_target_health",
             Self::TrafficQuota => "traffic_quota",
             Self::HetznerApi => "hetzner_api",
+            Self::Cpu => "cpu",
+            Self::Network => "network",
+            Self::DiskIo => "disk_io",
+        }
+    }
+
+    /// The Hetzner metric family (`type` of `GET /servers/{id}/metrics`) a metric check needs;
+    /// `None` for checks evaluated on inventory snapshots.
+    pub const fn metric_type(self) -> Option<&'static str> {
+        match self {
+            Self::Cpu => Some("cpu"),
+            Self::Network => Some("network"),
+            Self::DiskIo => Some("disk"),
+            _ => None,
+        }
+    }
+
+    /// Duration a metric rule needs in its query window (`for_s`); 0 for other checks or invalid params.
+    pub fn window_s(self, params: &Value) -> u64 {
+        match self {
+            Self::Cpu => parse::<CpuParams>(params).map_or(0, |p| p.for_s),
+            Self::Network => parse::<RateParams<NetworkMetric>>(params).map_or(0, |p| p.for_s),
+            Self::DiskIo => parse::<RateParams<DiskMetric>>(params).map_or(0, |p| p.for_s),
+            _ => 0,
         }
     }
 
@@ -50,7 +86,7 @@ impl CheckType {
     /// project-level checks; `resource_lifecycle` applies to every kind.
     pub const fn kinds(self) -> &'static [&'static str] {
         match self {
-            Self::ServerStatus => &["server"],
+            Self::ServerStatus | Self::Cpu | Self::Network | Self::DiskIo => &["server"],
             Self::LbTargetHealth => &["load_balancer"],
             Self::TrafficQuota => &["server", "load_balancer"],
             Self::ResourceLifecycle | Self::HetznerApi => &[],
@@ -67,6 +103,9 @@ impl CheckType {
             Self::LbTargetHealth => parse::<LbTargetHealthParams>(params)?.validate(),
             Self::TrafficQuota => parse::<TrafficQuotaParams>(params)?.validate(),
             Self::ResourceLifecycle | Self::HetznerApi => parse::<NoParams>(params).map(|_| ()),
+            Self::Cpu => parse::<CpuParams>(params)?.validate(),
+            Self::Network => parse::<RateParams<NetworkMetric>>(params)?.validate(),
+            Self::DiskIo => parse::<RateParams<DiskMetric>>(params)?.validate(),
         }
     }
 
@@ -81,7 +120,41 @@ impl CheckType {
             Self::ServerStatus => Some(server_status(snapshot, &parse(params)?)),
             Self::LbTargetHealth => Some(lb_target_health(snapshot, &parse(params)?)),
             Self::TrafficQuota => Some(traffic_quota(snapshot, &parse(params)?)),
-            Self::ResourceLifecycle | Self::HetznerApi => None,
+            Self::ResourceLifecycle
+            | Self::HetznerApi
+            | Self::Cpu
+            | Self::Network
+            | Self::DiskIo => None,
+        })
+    }
+
+    /// Evaluates a metric check for one server on the series Hetzner returned (`step` = the
+    /// resolution it used, `now` = UNIX seconds). `None` for non-metric checks.
+    pub fn evaluate_metrics(
+        self,
+        params: &Value,
+        snapshot: &Value,
+        metrics: &BTreeMap<String, Vec<(f64, f64)>>,
+        step: f64,
+        now: f64,
+    ) -> Result<Option<Outcome>, ParamsError> {
+        Ok(match self {
+            Self::Cpu => Some(cpu(snapshot, &parse(params)?, metrics, step, now)),
+            Self::Network => Some(rate(
+                snapshot,
+                &parse::<RateParams<NetworkMetric>>(params)?,
+                metrics,
+                step,
+                now,
+            )),
+            Self::DiskIo => Some(rate(
+                snapshot,
+                &parse::<RateParams<DiskMetric>>(params)?,
+                metrics,
+                step,
+                now,
+            )),
+            _ => None,
         })
     }
 }
@@ -114,6 +187,9 @@ pub struct Outcome {
     pub message: String,
     /// How long the condition must hold before firing (seconds).
     pub hold_s: u64,
+    /// How long the condition has held, measured by the check (metric series). `None` = use
+    /// the alert's local pending time.
+    pub held_s: Option<u64>,
 }
 
 /// Invalid rule params.
@@ -190,6 +266,7 @@ pub fn server_status(snapshot: &Value, params: &ServerStatusParams) -> Outcome {
             value: None,
             message: format!("server {name} is running"),
             hold_s: params.for_s,
+            held_s: None,
         };
     }
     let hold_s = if TRANSITIONAL.contains(&status) {
@@ -202,6 +279,7 @@ pub fn server_status(snapshot: &Value, params: &ServerStatusParams) -> Outcome {
         value: None,
         message: format!("server {name} is {status}"),
         hold_s,
+        held_s: None,
     }
 }
 
@@ -276,6 +354,7 @@ pub fn lb_target_health(snapshot: &Value, params: &LbTargetHealthParams) -> Outc
         value: Some(f64::from(u32::try_from(bad.len()).unwrap_or(u32::MAX))),
         message,
         hold_s: params.for_s,
+        held_s: None,
     }
 }
 
@@ -324,6 +403,7 @@ pub fn traffic_quota(snapshot: &Value, params: &TrafficQuotaParams) -> Outcome {
             value: None,
             message: format!("{name}: no traffic data yet"),
             hold_s: params.for_s,
+            held_s: None,
         };
     };
     if included == 0 {
@@ -332,6 +412,7 @@ pub fn traffic_quota(snapshot: &Value, params: &TrafficQuotaParams) -> Outcome {
             value: None,
             message: format!("{name}: no included traffic"),
             hold_s: params.for_s,
+            held_s: None,
         };
     }
     // Byte counts far below 2^52, so the conversion is exact enough for a percentage.
@@ -347,12 +428,256 @@ pub fn traffic_quota(snapshot: &Value, params: &TrafficQuotaParams) -> Outcome {
             gb(included)
         ),
         hold_s: params.for_s,
+        held_s: None,
     }
 }
 
 #[allow(clippy::cast_precision_loss)]
 fn gb(bytes: u64) -> String {
     format!("{:.1}", bytes as f64 / 1e9)
+}
+
+const fn default_cpu_threshold() -> f64 {
+    90.0
+}
+
+const fn default_cpu_for_s() -> u64 {
+    600
+}
+
+/// Params of `cpu`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CpuParams {
+    /// Percent of the server's total CPU (all vCPUs = 100 %).
+    #[serde(default = "default_cpu_threshold")]
+    pub threshold_pct: f64,
+    /// Seconds the threshold must be exceeded, measured on Hetzner's series.
+    #[serde(default = "default_cpu_for_s")]
+    pub for_s: u64,
+}
+
+impl CpuParams {
+    fn validate(&self) -> Result<(), ParamsError> {
+        if !(self.threshold_pct > 0.0 && self.threshold_pct <= 100.0) {
+            return Err(ParamsError(
+                "`threshold_pct` must be > 0 and ≤ 100".to_owned(),
+            ));
+        }
+        check_duration("for_s", self.for_s)
+    }
+}
+
+/// `cpu`: Hetzner reports percent **per vCPU** (100 = one full core, spec 2026-11-11), so the
+/// value is divided by `server_type.cores` from the server snapshot.
+pub fn cpu(
+    snapshot: &Value,
+    params: &CpuParams,
+    metrics: &BTreeMap<String, Vec<(f64, f64)>>,
+    step: f64,
+    now: f64,
+) -> Outcome {
+    let name = display_name(snapshot);
+    let cores = snapshot
+        .pointer("/server_type/cores")
+        .and_then(Value::as_f64)
+        .filter(|c| *c >= 1.0)
+        .unwrap_or(1.0);
+    let samples = metrics.get("cpu").map_or(&[][..], Vec::as_slice);
+    let trailing = series::trailing(samples, step, now, |v| v / cores > params.threshold_pct);
+    let Some(t) = trailing else {
+        return no_data(&name, "CPU", params.for_s);
+    };
+    let pct = round1(t.latest / cores);
+    let message = if t.breaching {
+        format!(
+            "server {name}: CPU {pct} % of {cores} vCPUs for {} (threshold {} % for {})",
+            duration(t.held_s),
+            params.threshold_pct,
+            duration(params.for_s)
+        )
+    } else {
+        format!("server {name}: CPU {pct} % of {cores} vCPUs")
+    };
+    Outcome {
+        condition: t.breaching,
+        value: Some(pct),
+        message,
+        hold_s: params.for_s,
+        held_s: Some(t.held_s),
+    }
+}
+
+/// A rate metric of the `network` or `disk_io` check.
+pub trait RateMetric: Copy + fmt::Debug {
+    /// Hetzner series name.
+    fn series(self) -> &'static str;
+    /// Unit for messages.
+    fn unit(self) -> &'static str;
+    /// Human label.
+    fn label(self) -> &'static str;
+}
+
+/// `network` metrics (public interface only).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkMetric {
+    BandwidthIn,
+    BandwidthOut,
+    PpsIn,
+    PpsOut,
+}
+
+impl RateMetric for NetworkMetric {
+    fn series(self) -> &'static str {
+        match self {
+            Self::BandwidthIn => "network.0.bandwidth.in",
+            Self::BandwidthOut => "network.0.bandwidth.out",
+            Self::PpsIn => "network.0.pps.in",
+            Self::PpsOut => "network.0.pps.out",
+        }
+    }
+
+    fn unit(self) -> &'static str {
+        match self {
+            Self::BandwidthIn | Self::BandwidthOut => "B/s",
+            Self::PpsIn | Self::PpsOut => "packets/s",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::BandwidthIn => "network in",
+            Self::BandwidthOut => "network out",
+            Self::PpsIn => "packets in",
+            Self::PpsOut => "packets out",
+        }
+    }
+}
+
+/// `disk_io` metrics.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DiskMetric {
+    IopsRead,
+    IopsWrite,
+    BandwidthRead,
+    BandwidthWrite,
+}
+
+impl RateMetric for DiskMetric {
+    fn series(self) -> &'static str {
+        match self {
+            Self::IopsRead => "disk.0.iops.read",
+            Self::IopsWrite => "disk.0.iops.write",
+            Self::BandwidthRead => "disk.0.bandwidth.read",
+            Self::BandwidthWrite => "disk.0.bandwidth.write",
+        }
+    }
+
+    fn unit(self) -> &'static str {
+        match self {
+            Self::IopsRead | Self::IopsWrite => "IOPS",
+            Self::BandwidthRead | Self::BandwidthWrite => "B/s",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::IopsRead => "disk reads",
+            Self::IopsWrite => "disk writes",
+            Self::BandwidthRead => "disk read bandwidth",
+            Self::BandwidthWrite => "disk write bandwidth",
+        }
+    }
+}
+
+const fn default_rate_for_s() -> u64 {
+    300
+}
+
+/// Params of `network` and `disk_io`: templates without a default threshold.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateParams<M> {
+    pub metric: M,
+    /// In the metric's unit (bytes/s, packets/s or IOPS). Required.
+    pub threshold: f64,
+    #[serde(default = "default_rate_for_s")]
+    pub for_s: u64,
+}
+
+impl<M> RateParams<M> {
+    fn validate(&self) -> Result<(), ParamsError> {
+        if !(self.threshold.is_finite() && self.threshold > 0.0) {
+            return Err(ParamsError("`threshold` must be > 0".to_owned()));
+        }
+        check_duration("for_s", self.for_s)
+    }
+}
+
+/// `network` / `disk_io`: the chosen series above `threshold` for `for_s`.
+pub fn rate<M: RateMetric>(
+    snapshot: &Value,
+    params: &RateParams<M>,
+    metrics: &BTreeMap<String, Vec<(f64, f64)>>,
+    step: f64,
+    now: f64,
+) -> Outcome {
+    let name = display_name(snapshot);
+    let metric = params.metric;
+    let samples = metrics.get(metric.series()).map_or(&[][..], Vec::as_slice);
+    let Some(t) = series::trailing(samples, step, now, |v| v > params.threshold) else {
+        return no_data(&name, metric.label(), params.for_s);
+    };
+    let value = round1(t.latest);
+    let message = if t.breaching {
+        format!(
+            "server {name}: {} {value} {} for {} (threshold {} for {})",
+            metric.label(),
+            metric.unit(),
+            duration(t.held_s),
+            params.threshold,
+            duration(params.for_s)
+        )
+    } else {
+        format!(
+            "server {name}: {} {value} {}",
+            metric.label(),
+            metric.unit()
+        )
+    };
+    Outcome {
+        condition: t.breaching,
+        value: Some(value),
+        message,
+        hold_s: params.for_s,
+        held_s: Some(t.held_s),
+    }
+}
+
+fn no_data(name: &str, what: &str, hold_s: u64) -> Outcome {
+    Outcome {
+        condition: false,
+        value: None,
+        message: format!("server {name}: no recent {what} data"),
+        hold_s,
+        held_s: None,
+    }
+}
+
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+/// `600` → `10 min`, `45` → `45 s`, `3900` → `1 h 5 min`.
+fn duration(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s} s"),
+        s if s < 3600 => format!("{} min", s / 60),
+        s if s % 3600 / 60 == 0 => format!("{} h", s / 3600),
+        s => format!("{} h {} min", s / 3600, s % 3600 / 60),
+    }
 }
 
 /// Message for a `resource_lifecycle` event.
@@ -534,7 +859,7 @@ mod tests {
         for check in CheckType::ALL {
             assert_eq!(check.as_str().parse::<CheckType>(), Ok(check));
         }
-        assert!("cpu".parse::<CheckType>().is_err());
+        assert!("memory".parse::<CheckType>().is_err());
     }
 
     #[test]
@@ -547,5 +872,153 @@ mod tests {
             lifecycle_message("primary_ip", "", 9, false),
             "primary ip 9 deleted"
         );
+    }
+
+    fn cpu_series(values: &[f64]) -> BTreeMap<String, Vec<(f64, f64)>> {
+        let now = 1_800_000_000.0;
+        let n = values.len();
+        let samples = values
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                (
+                    now - 60.0 * f64::from(u32::try_from(n - 1 - i).unwrap()),
+                    *v,
+                )
+            })
+            .collect();
+        BTreeMap::from([("cpu".to_owned(), samples)])
+    }
+
+    fn two_core_server() -> Value {
+        json!({ "id": 42, "name": "web-1", "status": "running", "server_type": { "cores": 2 } })
+    }
+
+    #[test]
+    fn cpu_is_normalised_by_vcpus() {
+        // 190 % per-vCPU sum on 2 vCPUs = 95 %, for 10 minutes.
+        let metrics = cpu_series(&[190.0; 10]);
+        let out = CheckType::Cpu
+            .evaluate_metrics(
+                &json!({}),
+                &two_core_server(),
+                &metrics,
+                60.0,
+                1_800_000_000.0,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(out.condition);
+        assert_eq!(out.value, Some(95.0));
+        assert_eq!(out.hold_s, 600);
+        assert_eq!(out.held_s, Some(600));
+        assert_eq!(
+            out.message,
+            "server web-1 (42): CPU 95 % of 2 vCPUs for 10 min (threshold 90 % for 10 min)"
+        );
+        // 150 on 2 vCPUs = 75 %: fine.
+        let ok = CheckType::Cpu
+            .evaluate_metrics(
+                &json!({}),
+                &two_core_server(),
+                &cpu_series(&[150.0; 10]),
+                60.0,
+                1_800_000_000.0,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!ok.condition);
+        assert_eq!(ok.value, Some(75.0));
+    }
+
+    #[test]
+    fn cpu_without_data_never_fires() {
+        let out = CheckType::Cpu
+            .evaluate_metrics(
+                &json!({}),
+                &two_core_server(),
+                &BTreeMap::new(),
+                60.0,
+                1_800_000_000.0,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!out.condition);
+        assert_eq!(out.held_s, None);
+        assert_eq!(out.message, "server web-1 (42): no recent CPU data");
+    }
+
+    #[test]
+    fn network_and_disk_need_a_threshold_and_metric() {
+        assert!(CheckType::Network.validate_params(&json!({})).is_err());
+        assert!(
+            CheckType::Network
+                .validate_params(&json!({ "metric": "bandwidth_out" }))
+                .is_err()
+        );
+        assert!(
+            CheckType::Network
+                .validate_params(&json!({ "metric": "bandwidth_up", "threshold": 1 }))
+                .is_err()
+        );
+        assert!(
+            CheckType::Network
+                .validate_params(&json!({ "metric": "bandwidth_out", "threshold": 0 }))
+                .is_err()
+        );
+        assert!(
+            CheckType::Network
+                .validate_params(&json!({ "metric": "pps_in", "threshold": 1000 }))
+                .is_ok()
+        );
+        assert!(
+            CheckType::DiskIo
+                .validate_params(&json!({ "metric": "iops_write", "threshold": 500, "for_s": 60 }))
+                .is_ok()
+        );
+        assert!(
+            CheckType::Cpu
+                .validate_params(&json!({ "threshold_pct": 101 }))
+                .is_err()
+        );
+        assert_eq!(CheckType::Cpu.window_s(&json!({})), 600);
+        assert_eq!(
+            CheckType::Network.window_s(&json!({ "metric": "pps_in", "threshold": 1 })),
+            300
+        );
+        assert_eq!(CheckType::ServerStatus.window_s(&json!({})), 0);
+    }
+
+    #[test]
+    fn disk_writes_above_threshold() {
+        let now = 1_800_000_000.0;
+        let samples: Vec<(f64, f64)> = (0..5)
+            .map(|i| (now - 60.0 * f64::from(4 - i), 800.0))
+            .collect();
+        let metrics = BTreeMap::from([("disk.0.iops.write".to_owned(), samples)]);
+        let out = CheckType::DiskIo
+            .evaluate_metrics(
+                &json!({ "metric": "iops_write", "threshold": 500, "for_s": 300 }),
+                &two_core_server(),
+                &metrics,
+                60.0,
+                now,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(out.condition);
+        assert_eq!(out.held_s, Some(300));
+        assert_eq!(
+            out.message,
+            "server web-1 (42): disk writes 800 IOPS for 5 min (threshold 500 for 5 min)"
+        );
+    }
+
+    #[test]
+    fn durations_read_naturally() {
+        assert_eq!(duration(45), "45 s");
+        assert_eq!(duration(600), "10 min");
+        assert_eq!(duration(3600), "1 h");
+        assert_eq!(duration(3900), "1 h 5 min");
     }
 }

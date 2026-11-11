@@ -1,6 +1,6 @@
 # Design: Data model (PostgreSQL)
 
-Status: tenancy, API keys, projects, resources, rules, alerts, alert events **implemented** (`migrations/0001`–`0003`); the rest **proposed**.
+Status: tenancy, API keys, projects, resources, rules, alerts, alert events **implemented** (`migrations/0001`–`0004`); the rest **proposed**.
 Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
@@ -22,7 +22,8 @@ hetzner_projects(
   budget_share real default 0.5,
   rl_limit int, rl_remaining int, rl_reset_at,
   metrics_interval_s int, last_fast_at, last_metrics_at, last_inventory_at,
-  next_fast_at, next_inventory_at, lease_until /* scheduler lease */, failures int /* consecutive */,
+  next_fast_at, next_inventory_at, next_metrics_at /* null = no metric rule in scope */,
+  lease_until /* scheduler lease */, failures int /* consecutive */,
   budget_h int, fixed_h int,
   created_at)
 
@@ -36,7 +37,7 @@ resources(
 -- alerting
 rules(
   id uuid pk, org_id fk, project_id fk null /* null = all projects of the org */,
-  name text, check_type text /* server_status|resource_lifecycle|lb_target_health|traffic_quota|hetzner_api */,
+  name text, check_type text /* server_status|resource_lifecycle|lb_target_health|traffic_quota|hetzner_api|cpu|network|disk_io */,
   params jsonb, selector text null, resource_id fk null,
   severity text /* info|warning|critical */, enabled bool, is_default bool,
   renotify_s int default 14400, created_at, updated_at)

@@ -1,6 +1,6 @@
 # Design: Checks
 
-Status: **accepted** (scope); `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, `hetzner_api` **implemented** (M2), the rest **proposed** · Crate: `crates/core` (`checks`)
+Status: **accepted** (scope); `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, `hetzner_api` **implemented** (M2), `cpu`, `network`, `disk_io` **implemented** (M3a), the rest **proposed** · Crate: `crates/core` (`checks`)
 
 A check is a Rust type that takes an inventory snapshot and/or a metric series and returns a
 value plus a boolean condition. Checks are pure: no IO, unit-tested with fixtures.
@@ -34,6 +34,19 @@ Created per project on connect. Params are validated on `PATCH /rules/{id}`; unk
 | Traffic quota 80 % used | `traffic_quota` | `threshold_pct` 80, `for_s` 0 | warning |
 | Traffic quota exhausted | `traffic_quota` | `threshold_pct` 100, `for_s` 0 | critical |
 | Hetzner API unreachable | `hetzner_api` | — | critical |
+| CPU high | `cpu` | `threshold_pct` 90, `for_s` 600 | warning |
+
+Templates without a default rule (create with `POST /rules`; `metric` and `threshold` are required):
+
+| `check_type` | `metric` | `threshold` unit | `for_s` default |
+|---|---|---|---|
+| `network` | `bandwidth_in`, `bandwidth_out` · `pps_in`, `pps_out` | bytes/s · packets/s (public interface) | 300 |
+| `disk_io` | `iops_read`, `iops_write` · `bandwidth_read`, `bandwidth_write` | IOPS · bytes/s | 300 |
+
+- Metric checks (`cpu`, `network`, `disk_io`) run on the metrics tier and measure their duration on Hetzner's series
+  ([scheduler](scheduler.md#metric-query-window)); value = newest sample (CPU in % of the whole server, one decimal).
+- `cpu`: `threshold_pct` is a share of the **whole server** (0–100): the series value is divided by `server_type.cores`
+  from the server snapshot (no extra request; missing → 1).
 
 - `server_status`: "≥ 2 cycles" is expressed as `for_s = 120`. Transitional statuses (`initializing`, `starting`,
   `migrating`, `rebuilding`, `deleting`) use `max(for_s, transitional_grace_s)` instead.
@@ -45,7 +58,7 @@ Created per project on connect. Params are validated on `PATCH /rules/{id}`; unk
 
 ## Notes and assumptions
 
-- **CPU (from spec, not yet verified):** Hetzner reports per vCPU — 100 = one full core; 400 = full load on 4 vCPUs. Always divide by `cores`. Verify before M3.
+- **CPU (verified 2026-11-11 in the spec text):** Hetzner reports per vCPU — 100 = one full core; 400 = full load on 4 vCPUs ("divide the metric value by the number of vCPUs"). Always divide by `cores`.
 - **Traffic forecast (assumption):** the billing period is not in the API. Assume calendar month, linear extrapolation from two snapshots. Label it as an estimate in UI and notifications. Verify before M3.
 - **`server_type.deprecation` is deprecated** in the spec — read `server_type.locations[].deprecation` instead.
 - **Not possible without an agent:** RAM, disk fill level, processes, logs. Do not fake these.

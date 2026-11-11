@@ -114,6 +114,7 @@ async fn connect_creates_default_rules_and_schedule(pool: PgPool) {
     assert_eq!(
         types,
         [
+            "cpu",
             "hetzner_api",
             "lb_target_health",
             "resource_lifecycle",
@@ -137,6 +138,8 @@ async fn connect_creates_default_rules_and_schedule(pool: PgPool) {
     // 1 server (1 request/min) + 6 inventory listings every 15 min.
     assert_eq!(project["fixed_h"], 60 + 6 * 4);
     assert_eq!(project["metrics_interval_s"], 60);
+    // The default `cpu` rule covers the server, so the metrics tier is scheduled.
+    assert!(project["next_metrics_at"].is_string());
     // The first sync is not reported as "created".
     assert_none(&env.alerts("").await);
 }
@@ -492,4 +495,217 @@ async fn alert_list_validates_and_paginates(pool: PgPool) {
         .await;
     assert_eq!(page2["alerts"].as_array().unwrap().len(), 1);
     assert!(page2["meta"]["pagination"]["next_page"].is_null());
+}
+
+// ---------------------------------------------------------------- M3a: metrics tier
+
+impl Env {
+    /// Server 1 running, with a CPU series ending at tick `n`.
+    async fn cpu_at(&self, n: i64, values: &[f64]) {
+        mock_project(&self.hetzner, &[server_json(1, "web-1", "running")], &[]).await;
+        let end = (self.t0 + Duration::seconds(n * STEP)).unix_timestamp();
+        common::mock_series(&self.hetzner, 1, "cpu", end, values).await;
+    }
+
+    async fn metric_requests(&self) -> usize {
+        self.hetzner
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().ends_with("/metrics"))
+            .count()
+    }
+
+    async fn rule_id(&self, check_type: &str) -> String {
+        let rules = self
+            .get(&format!("/api/v1/rules?project_id={}", self.project))
+            .await;
+        rules["rules"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["check_type"] == check_type)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn cpu_fires_on_the_series_and_resolves(pool: PgPool) {
+    let env = Env::new(pool, &[server_json(1, "web-1", "running")]).await;
+
+    // 190 % per-vCPU sum on 2 vCPUs = 95 %, but only for 3 minutes: pending.
+    env.cpu_at(1, &[20.0, 20.0, 190.0, 190.0, 190.0]).await;
+    env.tick(1).await;
+    assert!(env.metric_requests().await >= 1);
+    let pending = env.alerts_of("cpu", "pending").await;
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(pending[0]["value"], 95.0);
+
+    // 12 minutes above 90 %: fires, measured on the series.
+    env.cpu_at(2, &[190.0; 12]).await;
+    env.tick(2).await;
+    let firing = env.alerts_of("cpu", "firing").await;
+    assert_eq!(firing.len(), 1, "{firing:?}");
+    assert_eq!(firing[0]["severity"], "warning");
+    assert_eq!(
+        firing[0]["message"],
+        "server web-1 (1): CPU 95 % of 2 vCPUs for 12 min (threshold 90 % for 10 min)"
+    );
+
+    // Load gone: resolves after two good cycles.
+    env.cpu_at(3, &[20.0; 12]).await;
+    env.tick(3).await;
+    assert_eq!(env.alerts_of("cpu", "firing").await.len(), 1);
+    env.cpu_at(4, &[20.0; 12]).await;
+    env.tick(4).await;
+    assert_none(&env.alerts_of("cpu", "open").await);
+    let resolved = env.alerts_of("cpu", "resolved").await;
+    assert_eq!(
+        resolved[0]["message"],
+        "server web-1 (1): CPU 10 % of 2 vCPUs"
+    );
+
+    let project = env.project().await;
+    assert!(project["last_metrics_at"].is_string());
+    assert!(project["next_metrics_at"].is_string());
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn no_data_never_fires(pool: PgPool) {
+    let env = Env::new(pool, &[server_json(1, "web-1", "running")]).await;
+    // Stale data (last sample 10 min before the tick), then no series at all.
+    let end = (env.t0 + Duration::seconds(STEP)).unix_timestamp() - 600;
+    mock_project(&env.hetzner, &[server_json(1, "web-1", "running")], &[]).await;
+    common::mock_series(&env.hetzner, 1, "cpu", end, &[400.0; 12]).await;
+    env.tick(1).await;
+    mock_project(&env.hetzner, &[server_json(1, "web-1", "running")], &[]).await;
+    env.tick(2).await; // metrics → 404 (unmocked) → server skipped
+    assert_none(&env.alerts("").await);
+    assert_eq!(env.project().await["status"], "active");
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn without_metric_rules_there_are_no_metric_requests(pool: PgPool) {
+    let env = Env::new(pool, &[server_json(1, "web-1", "running")]).await;
+    let uri = format!("/api/v1/rules/{}", env.rule_id("cpu").await);
+    let (status, _) = call(
+        &env.st,
+        "PATCH",
+        &uri,
+        Some(&env.key),
+        Some(json!({ "enabled": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    env.cpu_at(1, &[190.0; 12]).await;
+    for n in 1..=3 {
+        env.tick(n).await;
+    }
+    assert_eq!(env.metric_requests().await, 0);
+    let project = env.project().await;
+    assert!(project["next_metrics_at"].is_null(), "{project}");
+    assert!(project["metrics_interval_s"].is_null(), "{project}");
+    assert_none(&env.alerts("").await);
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn metric_alerts_freeze_while_hetzner_is_down(pool: PgPool) {
+    let env = Env::new(pool, &[server_json(1, "web-1", "running")]).await;
+    env.cpu_at(1, &[190.0; 12]).await;
+    env.tick(1).await;
+    assert_eq!(env.alerts_of("cpu", "firing").await.len(), 1);
+    mock_failure(&env.hetzner, 503, "unavailable", None).await;
+    for n in 1..=3 {
+        env.tick(1 + n * 20).await;
+    }
+    assert_eq!(env.project().await["status"], "degraded");
+    assert_eq!(env.alerts_of("cpu", "firing").await.len(), 1);
+    assert_eq!(env.alerts_of("hetzner_api", "firing").await.len(), 1);
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn custom_rules_can_be_created_used_and_deleted(pool: PgPool) {
+    let env = Env::new(pool.clone(), &[server_json(1, "web-1", "running")]).await;
+    let post = |body: Value| call(&env.st, "POST", "/api/v1/rules", Some(&env.key), Some(body));
+    let base = json!({
+        "project_id": env.project, "name": "Egress", "check_type": "network", "severity": "critical",
+        "params": { "metric": "bandwidth_out", "threshold": 1_000_000, "for_s": 120 }
+    });
+    let with = |patch: Value| {
+        let mut body = base.clone();
+        for (k, v) in patch.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        body
+    };
+    for bad in [
+        with(json!({ "params": { "metric": "bandwidth_out" } })),
+        with(json!({ "check_type": "memory" })),
+        with(json!({ "check_type": "hetzner_api", "params": {} })),
+        with(json!({ "severity": "loud" })),
+        with(json!({ "selector": "env in (" })),
+        with(json!({ "project_id": uuid::Uuid::new_v4() })),
+        with(json!({ "resource_id": uuid::Uuid::new_v4() })),
+        with(json!({ "extra": true })),
+    ] {
+        let (status, body) = post(bad.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}: {body}");
+    }
+
+    let (status, body) = post(with(json!({ "selector": "env == test" }))).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let rule = body["rule"].clone();
+    assert_eq!(rule["is_default"], false);
+    assert_eq!(rule["selector"], "env=test");
+
+    // 2 MB/s out for 5 minutes → fires.
+    mock_project(&env.hetzner, &[server_json(1, "web-1", "running")], &[]).await;
+    let end = (env.t0 + Duration::seconds(STEP)).unix_timestamp();
+    common::mock_series(
+        &env.hetzner,
+        1,
+        "network.0.bandwidth.out",
+        end,
+        &[2_000_000.0; 5],
+    )
+    .await;
+    env.tick(1).await;
+    let firing = env.alerts_of("network", "firing").await;
+    assert_eq!(firing.len(), 1, "{firing:?}");
+    assert_eq!(firing[0]["severity"], "critical");
+
+    let uri = format!("/api/v1/rules/{}", rule["id"].as_str().unwrap());
+    let (_, other) = org_with_key(&pool, "other", Scope::Admin).await;
+    let (status, _) = call(&env.st, "DELETE", &uri, Some(&other), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, reader) = org_with_key(&pool, "readers", Scope::Read).await;
+    let (status, _) = call(
+        &env.st,
+        "POST",
+        "/api/v1/rules",
+        Some(&reader),
+        Some(base.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = call(&env.st, "DELETE", &uri, Some(&env.key), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    // Deleting a custom rule removes its alerts.
+    let left: Vec<Value> = env
+        .alerts("")
+        .await
+        .into_iter()
+        .filter(|a| a["check_type"] == "network")
+        .collect();
+    assert_none(&left);
+
+    let default = format!("/api/v1/rules/{}", env.rule_id("cpu").await);
+    let (status, body) = call(&env.st, "DELETE", &default, Some(&env.key), None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "default_rule");
 }

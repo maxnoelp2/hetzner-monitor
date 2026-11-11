@@ -111,6 +111,24 @@ pub async fn apply(
     Ok(applied)
 }
 
+/// True if `resource_id` is a resource of `project_id` and the project belongs to `org`.
+pub async fn belongs(
+    db: &PgPool,
+    org: OrgId,
+    project_id: Uuid,
+    resource_id: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM resources r JOIN hetzner_projects p ON p.id = r.project_id
+                        WHERE r.id = $1 AND r.project_id = $2 AND p.org_id = $3)",
+    )
+    .bind(resource_id)
+    .bind(project_id)
+    .bind(org.0)
+    .fetch_one(db)
+    .await
+}
+
 /// Current (not deleted) resources of the given kinds. `project_id` must be tenant-checked.
 pub async fn active(
     conn: &mut PgConnection,
