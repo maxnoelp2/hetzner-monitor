@@ -24,6 +24,13 @@ api() { # method path [curl args...] — secrets go via header file / stdin, not
   curl -sS -X "$method" -H @<(auth_header) -H 'Content-Type: application/json' "$@" "$HM_URL/api/v1$path"
 }
 
+preflight="$(api GET "/alerts?per_page=1" -o /dev/null -w '%{http_code}')"
+if [[ "$preflight" != "200" ]]; then
+  echo "✗ GET /alerts returned HTTP $preflight — is the running stack M2 and HM_API_KEY valid?"
+  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+  exit 1
+fi
+
 project_id="${HM_PROJECT_ID:-}"
 if [[ -z "$project_id" ]]; then
   : "${HCLOUD_TOKEN:?export HCLOUD_TOKEN (read-only token of the TEST project) or set HM_PROJECT_ID}"
@@ -47,10 +54,23 @@ for r in json.load(sys.stdin)["resources"]:
         print("    {:>10}  {}".format(r["hetzner_id"], r["name"]))
 '
 
+read -r -p "Are these servers in a dedicated TEST project that you may power off? [y/N] " answer
+if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+  if [[ -z "${HM_PROJECT_ID:-}" ]]; then
+    api DELETE "/projects/$project_id" -o /dev/null && echo "→ project disconnected again"
+  fi
+  echo "✗ aborted — connect a test project (its own READ token) instead"; exit 1
+fi
+
 echo "→ watching alerts every ${INTERVAL}s (Ctrl+C to stop). Power the test server off now."
 last=""
 while true; do
-  snapshot="$(api GET "/alerts?project_id=$project_id&per_page=100" | python3 -I -c '
+  response="$(api GET "/alerts?project_id=$project_id&per_page=100" -w '\n%{http_code}')"
+  status="${response##*$'\n'}"; body="${response%$'\n'*}"
+  if [[ "$status" != "200" ]]; then
+    echo "[$(date +%H:%M:%S)] ✗ GET /alerts: HTTP $status"; sleep "$INTERVAL"; continue
+  fi
+  snapshot="$(printf '%s' "$body" | python3 -I -c '
 import json, sys
 body = json.load(sys.stdin)
 lines = []

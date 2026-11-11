@@ -14,7 +14,7 @@ no agent on the servers, no Prometheus stack.
 
 ## Current status
 
-**M2 implemented, waiting for the owner's real power-off test** — on top of M1 (bootstrap, API keys, encrypted tokens,
+**M2 done** (real power-off test skipped by owner decision, covered by integration tests) — on top of M1 (bootstrap, API keys, encrypted tokens,
 `hm-hcloud`, connect + inventory): scheduler with fast/inventory tiers, budget and leases, rule engine, alert lifecycle,
 checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, system alert `hetzner_api`, rules/alerts API.
 No notifications yet (M4). Next milestone is **M3** (metric checks, Hetzner-specific, hygiene, cost).

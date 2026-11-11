@@ -1,6 +1,6 @@
 # Plan: M2 — scheduler, rule engine, alert lifecycle, first checks
 
-- Status: In progress — implemented, waiting for the owner's real power-off test
+- Status: Done — real power-off test skipped by owner decision (see Result)
 - Milestone: M2
 - Owner: Claude (agent), reviewed by Max Nölp
 - Started: 2026-11-11
@@ -24,7 +24,7 @@ powering it on resolves it. Nothing is sent to channels yet: notifications are M
 - [x] **Checks** (pure, fixtures from the spec): `server_status` (≠ `running` for ≥ 2 cycles; `starting`/`migrating`/`rebuilding` tolerated for < 10 min), `lb_target_health` (any target service ≠ `healthy`), `traffic_quota` (`outgoing_traffic / included_traffic` for servers and LBs), `resource_lifecycle` (created/deleted from the inventory diff, as a one-shot event).
 - [x] **API:** `GET /rules`, `PATCH /rules/{id}` (`enabled`, `params`, `severity`, `selector`), `GET /alerts?state=&project_id=`, `GET /alerts/{id}` (with events). Tenant-scoped, isolation tested. Creating and deleting rules is out of scope (see below).
 - [x] **End-to-end test** (wiremock Hetzner, injected clock): server `running` → `off` over several cycles → alert `firing` → `running` → `resolved` after 2 cycles.
-- [ ] **Real test by the owner:** on a **dedicated test server** (not production), power off → alert `firing` within about 3 min; power on → `resolved` within about 3 min.
+- [ ] ~~**Real test by the owner**~~ — **not performed** (owner decision, 2026-11-11): the owner's only connected project runs production servers, which must not be powered off, and no separate test project was set up. Covered instead by the integration test `power_off_fires_and_power_on_resolves` against a mocked Hetzner API.
 - [x] fmt, clippy `-D warnings`, tests green; docs updated (scheduler, alerting, checks, data-model, api, configuration, ARCHITECTURE status, CLAUDE.md status, roadmap); ADR-0010 → Accepted.
 
 ## Context
@@ -69,7 +69,7 @@ The Hetzner field shapes used by the checks (`servers[].status`, `outgoing_traff
 11. [x] **Smoke script `scripts/smoke-m2.sh`**: connects a project with `--keep`, then polls `GET /alerts` every 15 s and prints
         state changes, so the owner can watch the power off/on test.
 12. [x] **Docs**: see acceptance criteria. Record the lease design in scheduler.md (it refines "row lock").
-13. [ ] **Verify**: all criteria, owner's real test, record results, open PR.
+13. [x] **Verify**: all criteria except the real power-off test (skipped, see Result); PR opened.
 
 ## Dependencies (new crates)
 
@@ -95,6 +95,17 @@ None planned. Jitter uses `getrandom` (already in the tree); the selector parser
 - Lease instead of a long-held row lock: crash safety relies on `lease_until` expiring (2 min).
 - Inventory sync rewrites all resource snapshots every 15 min; fine at this size, revisit with many projects.
 
+## Result (2026-11-11)
+
+| Criterion | Result |
+|---|---|
+| Scheduler, lease, budget, Hetzner errors, invariant 6, rules, state machine, checks, API | ✅ 43 core unit tests + 12 scheduler integration scenarios (wiremock Hetzner, synthetic clock) |
+| End-to-end power off → `firing` → power on → `resolved` | ✅ `power_off_fires_and_power_on_resolves` (mocked Hetzner) |
+| Real scheduler loop | ✅ binary started against a local DB, scheduler started, clean stop on SIGTERM |
+| Real stack with M2 against the real Hetzner API | ✅ owner's stack rebuilt with M2, real project (9 servers, read-only): connect, 6 default rules, fast cycles every ~60 s, `failures` 0, `fixed_h` 84 (= 9 servers · 60 + 6 listings · 4), `budget_h` 1800, no alerts (all servers running) |
+| **Real power-off test** | ⏭️ **not performed — owner decision.** The available project runs production servers (must not be powered off); no test project. Gap: the real `status` values and timing of a power-off are not observed against Hetzner itself, only the documented spec values in the mock. Can be done later with `scripts/smoke-m2.sh` and a dedicated test project. |
+| fmt / clippy `-D warnings --locked` / tests | ✅ 83 tests |
+
 ## Progress log
 
 - 2026-11-11 — Plan drafted after M1 was closed (PR #7); approved by Max.
@@ -108,3 +119,8 @@ None planned. Jitter uses `getrandom` (already in the tree); the selector parser
   computed and shown (planned interval for M3). (8) Hetzner spec re-checked: label-selector LB targets nest their
   health in `targets[].targets[].health_status`. Tests: 43 core unit tests, 12 scheduler integration scenarios;
   the real loop was started against a local DB and stopped cleanly on SIGTERM.
+- 2026-11-11 — Owner's real test: the stack first still ran M1 (no `/alerts`), and the token in the shell was the
+  production one, so `smoke-m2.sh` listed production servers. Hardened the script: preflight check that the stack is
+  M2, a confirmation prompt before watching, the project is disconnected again on "no", HTTP errors no longer crash
+  the watch loop. The owner then decided to skip the real power-off test (production servers must not be powered off);
+  recorded under Result. Plan done.

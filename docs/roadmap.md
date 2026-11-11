@@ -19,13 +19,14 @@ link the execution plan in `docs/plans/` that delivered them.
 - [ ] CPU metric is per vCPU (100 = one full core) — verify on a real multi-core server.
 - [ ] Traffic billing period — not exposed by the API; confirm the calendar-month assumption.
 
-## M2 — in progress ([plan](plans/2026-11-11-m2-scheduler-rules-alerts.md))
+## M2 — done ([plan](plans/2026-11-11-m2-scheduler-rules-alerts.md))
 
 - [x] Scheduler: fast (60 s) + inventory (15 min) tiers, budget maths, leases, 429/401/5xx handling
 - [x] Rule engine, alert state machine, default rules, label selectors
 - [x] Checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`; system alert `hetzner_api`
 - [x] Rules and alerts API
-- [ ] Owner's power-off test on a dedicated test server (`scripts/smoke-m2.sh`)
+- [x] Power off → `firing`, power on → `resolved`: verified by integration test against a mocked Hetzner API.
+      The real power-off test was **not performed** (owner decision: only production servers available); optional later with a test project and `scripts/smoke-m2.sh`.
 
 ## M1 — done ([plan](plans/2026-11-06-m1-connect-inventory.md))
 
