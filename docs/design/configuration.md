@@ -20,6 +20,6 @@ The first organisation, owner and admin API key are created with the CLI, not en
 `hetzner-monitor bootstrap --org <name> --email <email>` (empty database only; prints the key once).
 Generate a master key with `hetzner-monitor master-key generate` (or `openssl rand -base64 32`).
 
-Docker Compose additionally reads `HM_POSTGRES_PASSWORD`, `HM_POSTGRES_PORT` (default `55432`) and `HM_PORT` (default `8080`) — see `deploy/.env.example`. Integration tests use `DATABASE_URL` (sqlx convention).
+Docker Compose additionally reads `HM_POSTGRES_PASSWORD`, `HM_POSTGRES_PORT` (default `55432`) and `HM_PORT` (default `8080`) — see `deploy/.env.example`. Postgres applies `HM_POSTGRES_PASSWORD` only when its volume is first initialised: create `deploy/.env` **before** the first `up`, otherwise changing the password later needs `docker compose -f deploy/docker-compose.yml down -v` (deletes all data) or an `ALTER USER` inside Postgres. Integration tests use `DATABASE_URL` (sqlx convention).
 
 Rule: every new variable is added here **in the same PR** that introduces it.

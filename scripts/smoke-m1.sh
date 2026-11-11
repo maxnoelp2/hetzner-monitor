@@ -33,11 +33,11 @@ fi
 python3 -I -c '
 import json, sys
 body = json.loads(sys.argv[1]); p = body["project"]
-print(f"✓ connected: id={p[\"id\"]} status={p[\"status\"]} token_hint=…{p[\"token_hint\"]}")
-print(f"  rate limit: {p[\"rl_remaining\"]}/{p[\"rl_limit\"]} remaining")
+print("✓ connected: id={id} status={status} token_hint=…{token_hint}".format(**p))
+print("  rate limit: {rl_remaining}/{rl_limit} remaining".format(**p))
 print("  inventory (seen / new / deleted):")
 for kind, c in (body.get("sync") or {}).items():
-    print(f"    {kind:<14} {c[\"seen\"]:>4} / {c[\"new\"]:>4} / {c[\"deleted\"]:>4}")
+    print("    {:<14} {:>4} / {:>4} / {:>4}".format(kind, c["seen"], c["new"], c["deleted"]))
 ' "$body"
 project_id="$(python3 -I -c 'import json,sys; print(json.loads(sys.argv[1])["project"]["id"])' "$body")"
 
@@ -46,7 +46,7 @@ api GET "/projects/$project_id/resources" | python3 -I -c '
 import json, sys
 for r in json.load(sys.stdin)["resources"]:
     state = "deleted" if r["deleted_at"] else "active"
-    print(f"    {r[\"kind\"]:<14} {r[\"hetzner_id\"]:>10}  {r[\"name\"]}  ({state})")
+    print("    {:<14} {:>10}  {}  ({})".format(r["kind"], r["hetzner_id"], r["name"], state))
 '
 
 echo "→ token leak check"
