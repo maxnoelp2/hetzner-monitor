@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use std::collections::BTreeMap;
+
 use serde_json::{Map, Value};
 use zeroize::Zeroizing;
 
@@ -125,6 +127,37 @@ pub struct RawResource {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listed<T> {
     pub items: Vec<T>,
+    pub rate_limit: RateLimit,
+}
+
+/// Metric families of `GET /servers/{id}/metrics` (`type` parameter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MetricType {
+    /// Series `cpu` (percent per vCPU: 100 = one full core).
+    Cpu,
+    /// Series `disk.0.iops.read|write`, `disk.0.bandwidth.read|write`.
+    Disk,
+    /// Series `network.0.pps.in|out`, `network.0.bandwidth.in|out` (public interface).
+    Network,
+}
+
+impl MetricType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Disk => "disk",
+            Self::Network => "network",
+        }
+    }
+}
+
+/// Metric series of one server. Values are parsed from Hetzner's strings; non-numeric
+/// samples are dropped. Each series is sorted by timestamp (UNIX seconds).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Metrics {
+    /// Resolution Hetzner actually used, in seconds.
+    pub step: f64,
+    pub series: BTreeMap<String, Vec<(f64, f64)>>,
     pub rate_limit: RateLimit,
 }
 

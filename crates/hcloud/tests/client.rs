@@ -187,3 +187,80 @@ async fn live_api_rejects_a_fake_token() {
         .unwrap_err();
     assert_eq!(err, Error::InvalidToken);
 }
+
+#[tokio::test]
+async fn fetches_and_parses_server_metrics() {
+    use hm_hcloud::MetricType;
+    use time::macros::datetime;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/servers/42/metrics"))
+        .and(query_param("type", "cpu,network"))
+        .and(query_param("start", "2026-11-11T10:00:00Z"))
+        .and(query_param("end", "2026-11-11T10:10:00Z"))
+        .and(query_param("step", "60"))
+        .and(header("authorization", "Bearer test-token-0000"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("RateLimit-Limit", "3600")
+                .insert_header("RateLimit-Remaining", "3590")
+                .insert_header("RateLimit-Reset", "1793000000")
+                .set_body_json(json!({ "metrics": {
+                    "start": "2026-11-11T10:00:00Z", "end": "2026-11-11T10:10:00Z", "step": 60,
+                    "time_series": {
+                        "cpu": { "values": [[1_794_391_260.0, "12.5"], [1_794_391_200.0, "10"], [1_794_391_320.0, "NaN"], [1_794_391_380.0, "x"]] },
+                        "network.0.bandwidth.in": { "values": [[1_794_391_200.0, "1024"]] }
+                    }
+                }})),
+        )
+        .mount(&server)
+        .await;
+    let metrics = client(&server)
+        .server_metrics(
+            &token(),
+            42,
+            &[MetricType::Cpu, MetricType::Network],
+            datetime!(2026-11-11 10:00 UTC),
+            datetime!(2026-11-11 10:10 UTC),
+            60,
+        )
+        .await
+        .unwrap();
+    assert!((metrics.step - 60.0).abs() < f64::EPSILON);
+    // Sorted by time; NaN and non-numeric samples dropped.
+    assert_eq!(
+        metrics.series["cpu"],
+        [(1_794_391_200.0, 10.0), (1_794_391_260.0, 12.5)]
+    );
+    assert_eq!(
+        metrics.series["network.0.bandwidth.in"],
+        [(1_794_391_200.0, 1024.0)]
+    );
+    assert_eq!(metrics.rate_limit.remaining, Some(3590));
+}
+
+#[tokio::test]
+async fn metrics_of_a_vanished_server_is_a_404_api_error() {
+    use hm_hcloud::MetricType;
+    use time::macros::datetime;
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/servers/7/metrics"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(
+            json!({ "error": { "code": "not_found", "message": "server with ID '7' not found" } }),
+        ))
+        .mount(&server)
+        .await;
+    let err = client(&server)
+        .server_metrics(
+            &token(),
+            7,
+            &[MetricType::Cpu],
+            datetime!(2026-11-11 10:00 UTC),
+            datetime!(2026-11-11 10:10 UTC),
+            60,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Api { status: 404, .. }), "{err:?}");
+}

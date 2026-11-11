@@ -58,9 +58,13 @@ pub async fn connect(
 
     let now = OffsetDateTime::now_utc();
     let report = match repo::projects::try_lease(&state.db, org, id, now, now + LEASE).await? {
-        Some(claimed) => cycle::run(state, &claimed, &token, Tier::Inventory, now)
-            .await
-            .ok(),
+        Some(claimed) => {
+            let report = cycle::run(state, &claimed, &token, Tier::Inventory, now)
+                .await
+                .ok();
+            repo::projects::release(&state.db, org, id).await?;
+            report
+        }
         None => None,
     };
     let project = repo::projects::get(&state.db, org, project.id)
@@ -92,13 +96,11 @@ pub async fn sync(state: &AppState, org: OrgId, project_id: Uuid) -> Result<Sync
         Ok(token) => cycle::run(state, &claimed, &token, Tier::Inventory, now).await,
         Err(err) => Err(err),
     };
+    repo::projects::release(&state.db, org, project_id).await?;
     match result {
         Ok(report) => Ok(report),
         Err(CycleError::Hetzner(err)) => Err(hetzner_error(&err)),
-        Err(err) => {
-            let _ = repo::projects::release(&state.db, org, project_id).await;
-            Err(ApiError::internal(&err))
-        }
+        Err(err) => Err(ApiError::internal(&err)),
     }
 }
 

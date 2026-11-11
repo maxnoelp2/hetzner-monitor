@@ -80,24 +80,25 @@ async fn spawn_due(
     Ok(n)
 }
 
+/// Runs every due tier of a claimed project in order, then releases the lease. A failing
+/// tier stops the rest (its failure already postponed all tiers).
 async fn run_claimed(state: &AppState, project: &Claimed, now: OffsetDateTime) {
-    let tier = Tier::due(project, now);
-    let result = match cycle::open_token(state, project) {
-        Ok(token) => cycle::run(state, project, &token, tier, now).await,
-        Err(err) => Err(err),
+    let Ok(token) = cycle::open_token(state, project) else {
+        // Keep the lease: retried when it expires, without hammering the log.
+        tracing::error!(project_id = %project.id, "stored token could not be decrypted (wrong HM_MASTER_KEY?)");
+        return;
     };
-    match result {
-        Ok(_) | Err(CycleError::Hetzner(_)) => {}
-        Err(CycleError::Token) => {
-            // Keep the lease: retried when it expires, without hammering the log.
-            tracing::error!(project_id = %project.id, "stored token could not be decrypted (wrong HM_MASTER_KEY?)");
-        }
-        Err(CycleError::Db(error)) => {
-            tracing::error!(project_id = %project.id, %error, "poll cycle failed: database error");
-            if let Err(error) = repo::projects::release(&state.db, project.org(), project.id).await
-            {
-                tracing::warn!(project_id = %project.id, %error, "could not release lease");
+    for tier in Tier::due(project, now) {
+        match cycle::run(state, project, &token, tier, now).await {
+            Ok(_) => {}
+            Err(CycleError::Hetzner(_)) => break,
+            Err(error) => {
+                tracing::error!(project_id = %project.id, ?tier, %error, "poll cycle failed");
+                break;
             }
         }
+    }
+    if let Err(error) = repo::projects::release(&state.db, project.org(), project.id).await {
+        tracing::warn!(project_id = %project.id, %error, "could not release lease");
     }
 }

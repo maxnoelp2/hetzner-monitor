@@ -17,7 +17,8 @@ no agent on the servers, no Prometheus stack.
 **M2 done** (real power-off test skipped by owner decision, covered by integration tests) — on top of M1 (bootstrap, API keys, encrypted tokens,
 `hm-hcloud`, connect + inventory): scheduler with fast/inventory tiers, budget and leases, rule engine, alert lifecycle,
 checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, system alert `hetzner_api`, rules/alerts API.
-No notifications yet (M4). Next milestone is **M3** (metric checks, Hetzner-specific, hygiene, cost).
+**M3a in progress:** metrics tier, checks `cpu`/`network`/`disk_io`, custom rules (`POST`/`DELETE /rules`).
+No notifications yet (M4). After M3a: **M3b** (Hetzner-specific, hygiene and cost checks).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -49,6 +50,7 @@ docker compose -f deploy/docker-compose.yml up --build -d                       
 docker compose -f deploy/docker-compose.yml run --rm app bootstrap --org <name> --email <email>  # prints admin key once
 scripts/smoke-m1.sh                                        # real-project smoke test (HCLOUD_TOKEN, HM_API_KEY from env)
 scripts/smoke-m2.sh                                        # watch alerts while powering a TEST server off/on
+scripts/smoke-m3a.sh                                       # read-only: temporary low-threshold cpu rule fires from real metrics
 ```
 
 - Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.
@@ -56,7 +58,7 @@ scripts/smoke-m2.sh                                        # watch alerts while 
 - Host ports are configurable via `HM_POSTGRES_PORT` / `HM_PORT` (see `deploy/.env.example`).
 - sqlx 0.9 rejects dynamically built SQL strings: write queries as literals (use `concat!` with a macro for shared column lists).
 - Tests use `tests/common/mod.rs`: `state()` with a fixed test master key and a wiremock Hetzner, `org_with_key()`, `call()`,
-  `mock_project()` / `mock_failure()`. Drive poll cycles with `hm_server::scheduler::tick(&state, now)` and a synthetic clock.
+  `mock_project()` / `mock_failure()` / `mock_series()`. Drive poll cycles with `hm_server::scheduler::tick(&state, now)` and a synthetic clock.
 
 ## How to work here
 

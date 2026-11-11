@@ -40,12 +40,25 @@ pub enum Transition {
 
 /// Next transition for a condition evaluated at `now`, with the condition having to hold
 /// for `hold_s` seconds before firing.
-pub fn step(open: Option<Open>, condition: bool, hold_s: u64, now: i64) -> Transition {
-    let held_long_enough =
-        |since: i64| u64::try_from(now.saturating_sub(since)).unwrap_or(0) >= hold_s;
+///
+/// `measured_s` is how long the condition has held as measured by the check itself (metric checks
+/// measure it on Hetzner's series). Without it, the alert's local `pending` time is used.
+pub fn step(
+    open: Option<Open>,
+    condition: bool,
+    hold_s: u64,
+    measured_s: Option<u64>,
+    now: i64,
+) -> Transition {
+    let held_long_enough = |since: i64| {
+        measured_s.unwrap_or_else(|| u64::try_from(now.saturating_sub(since)).unwrap_or(0))
+            >= hold_s
+    };
     match (open, condition) {
         (None, false) => Transition::Nothing,
-        (None, true) if hold_s == 0 => Transition::OpenFiring,
+        (None, true) if hold_s == 0 || measured_s.is_some_and(|h| h >= hold_s) => {
+            Transition::OpenFiring
+        }
         (None, true) => Transition::OpenPending,
         (Some(Open::Pending { since }), true) if held_long_enough(since) => Transition::Fire,
         (Some(Open::Pending { .. }), true) => Transition::StayPending,
@@ -77,44 +90,47 @@ mod tests {
 
     #[test]
     fn ok_stays_ok() {
-        assert_eq!(step(None, false, 120, T0), Transition::Nothing);
+        assert_eq!(step(None, false, 120, None, T0), Transition::Nothing);
     }
 
     #[test]
     fn condition_opens_pending_then_fires_after_hold() {
-        assert_eq!(step(None, true, 120, T0), Transition::OpenPending);
+        assert_eq!(step(None, true, 120, None, T0), Transition::OpenPending);
         let pending = Some(Open::Pending { since: T0 });
-        assert_eq!(step(pending, true, 120, T0 + 60), Transition::StayPending);
-        assert_eq!(step(pending, true, 120, T0 + 120), Transition::Fire);
+        assert_eq!(
+            step(pending, true, 120, None, T0 + 60),
+            Transition::StayPending
+        );
+        assert_eq!(step(pending, true, 120, None, T0 + 120), Transition::Fire);
     }
 
     #[test]
     fn zero_hold_fires_at_once() {
-        assert_eq!(step(None, true, 0, T0), Transition::OpenFiring);
+        assert_eq!(step(None, true, 0, None, T0), Transition::OpenFiring);
     }
 
     #[test]
     fn pending_is_dropped_when_condition_clears() {
         let pending = Some(Open::Pending { since: T0 });
-        assert_eq!(step(pending, false, 120, T0 + 60), Transition::Cancel);
+        assert_eq!(step(pending, false, 120, None, T0 + 60), Transition::Cancel);
     }
 
     #[test]
     fn firing_resolves_only_after_two_good_cycles() {
         let firing = Some(Open::Firing { ok_cycles: 0 });
         assert_eq!(
-            step(firing, false, 120, T0),
+            step(firing, false, 120, None, T0),
             Transition::StayFiring { ok_cycles: 1 }
         );
         let once_ok = Some(Open::Firing { ok_cycles: 1 });
-        assert_eq!(step(once_ok, false, 120, T0), Transition::Resolve);
+        assert_eq!(step(once_ok, false, 120, None, T0), Transition::Resolve);
     }
 
     #[test]
     fn flapping_resets_the_counter() {
         let once_ok = Some(Open::Firing { ok_cycles: 1 });
         assert_eq!(
-            step(once_ok, true, 120, T0),
+            step(once_ok, true, 120, None, T0),
             Transition::StayFiring { ok_cycles: 0 }
         );
     }
@@ -122,12 +138,35 @@ mod tests {
     #[test]
     fn clock_going_backwards_does_not_fire() {
         let pending = Some(Open::Pending { since: T0 });
-        assert_eq!(step(pending, true, 120, T0 - 500), Transition::StayPending);
+        assert_eq!(
+            step(pending, true, 120, None, T0 - 500),
+            Transition::StayPending
+        );
     }
 
     #[test]
     fn gone_resources_close_their_alert() {
         assert_eq!(gone(Open::Pending { since: T0 }), Transition::Cancel);
         assert_eq!(gone(Open::Firing { ok_cycles: 0 }), Transition::Resolve);
+    }
+
+    #[test]
+    fn measured_duration_overrides_the_local_clock() {
+        // Metric checks: 10 min measured on the series fire at once, even for a new alert.
+        assert_eq!(step(None, true, 600, Some(600), T0), Transition::OpenFiring);
+        assert_eq!(
+            step(None, true, 600, Some(300), T0),
+            Transition::OpenPending
+        );
+        let pending = Some(Open::Pending { since: T0 });
+        // Local time would say 1000 s, the series says 300 s: not yet.
+        assert_eq!(
+            step(pending, true, 600, Some(300), T0 + 1000),
+            Transition::StayPending
+        );
+        assert_eq!(
+            step(pending, true, 600, Some(660), T0 + 60),
+            Transition::Fire
+        );
     }
 }

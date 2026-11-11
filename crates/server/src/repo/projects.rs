@@ -26,6 +26,11 @@ pub struct ProjectView {
     pub next_fast_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub next_inventory_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_metrics_at: Option<OffsetDateTime>,
+    /// `null` = no enabled metric rule covers a server of this project; the metrics tier is idle.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub next_metrics_at: Option<OffsetDateTime>,
     /// Consecutive failed cycles.
     pub failures: i32,
     /// Share of `RateLimit-Limit` this tool may use.
@@ -34,7 +39,7 @@ pub struct ProjectView {
     pub budget_h: Option<i32>,
     /// Requests per hour of the fast and inventory tiers.
     pub fixed_h: Option<i32>,
-    /// Planned metrics interval (the metrics tier lands in M3); `null` = paused or unknown.
+    /// Metrics interval for the servers in scope of metric rules; `null` = no such server, or paused (budget used up).
     pub metrics_interval_s: Option<i32>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -44,8 +49,8 @@ pub struct ProjectView {
 macro_rules! view_columns {
     () => {
         "id, name, status, status_message, token_hint, rl_limit, rl_remaining, rl_reset_at, last_fast_at,
-         last_inventory_at, next_fast_at, next_inventory_at, failures, budget_share, budget_h, fixed_h,
-         metrics_interval_s, created_at"
+         last_inventory_at, next_fast_at, next_inventory_at, last_metrics_at, next_metrics_at, failures,
+         budget_share, budget_h, fixed_h, metrics_interval_s, created_at"
     };
 }
 
@@ -144,7 +149,11 @@ pub struct Claimed {
     pub failures: i32,
     pub budget_share: f32,
     pub last_inventory_at: Option<OffsetDateTime>,
+    pub next_fast_at: Option<OffsetDateTime>,
     pub next_inventory_at: Option<OffsetDateTime>,
+    pub next_metrics_at: Option<OffsetDateTime>,
+    pub budget_h: Option<i32>,
+    pub fixed_h: Option<i32>,
     pub token_ct: Vec<u8>,
     pub token_dek_ct: Vec<u8>,
     pub key_version: i32,
@@ -166,8 +175,8 @@ impl Claimed {
 
 macro_rules! claimed_columns {
     () => {
-        "id, org_id, status, failures, budget_share, last_inventory_at, next_inventory_at, token_ct,
-         token_dek_ct, key_version"
+        "id, org_id, status, failures, budget_share, last_inventory_at, next_fast_at, next_inventory_at,
+         next_metrics_at, budget_h, fixed_h, token_ct, token_dek_ct, key_version"
     };
 }
 
@@ -188,7 +197,8 @@ pub async fn claim_due(
              WHERE status IN ('active', 'degraded')
                AND (lease_until IS NULL OR lease_until < $1)
                AND (next_fast_at IS NULL OR next_fast_at <= $1
-                    OR next_inventory_at IS NULL OR next_inventory_at <= $1)
+                    OR next_inventory_at IS NULL OR next_inventory_at <= $1
+                    OR next_metrics_at <= $1)
              ORDER BY next_fast_at NULLS FIRST
              LIMIT $3
              FOR UPDATE SKIP LOCKED)
@@ -245,10 +255,13 @@ pub struct Success {
     pub budget_h: u32,
     pub fixed_h: u32,
     pub metrics_interval_s: Option<u32>,
+    /// `None`: no metric rule in scope, the metrics tier stops. `Some(t)`: the metrics tier runs;
+    /// it starts at `t` if it was idle, an existing schedule is kept.
+    pub metrics_from: Option<OffsetDateTime>,
 }
 
-/// Records a successful cycle: project `active`, failures reset, schedule and budget updated,
-/// lease released.
+/// Records a successful fast or inventory cycle: project `active`, failures reset, schedule
+/// and budget updated. The caller releases the lease.
 pub async fn record_success(
     conn: &mut sqlx::PgConnection,
     org: OrgId,
@@ -264,7 +277,9 @@ pub async fn record_success(
              rl_reset_at = coalesce($5, rl_reset_at),
              last_fast_at = $6, last_inventory_at = CASE WHEN $7 THEN $6 ELSE last_inventory_at END,
              next_fast_at = $8, next_inventory_at = coalesce($9, next_inventory_at),
-             budget_h = $10, fixed_h = $11, metrics_interval_s = $12, lease_until = NULL
+             budget_h = $10, fixed_h = $11, metrics_interval_s = $12,
+             next_metrics_at = CASE WHEN $13::timestamptz IS NULL THEN NULL
+                                    ELSE coalesce(next_metrics_at, $13) END
          WHERE id = $1 AND org_id = $2",
     )
     .bind(id)
@@ -279,6 +294,38 @@ pub async fn record_success(
     .bind(int(s.budget_h))
     .bind(int(s.fixed_h))
     .bind(s.metrics_interval_s.map(int))
+    .bind(s.metrics_from)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Records a successful metrics cycle. `next_metrics_at = None` stops the metrics tier.
+pub async fn record_metrics_success(
+    conn: &mut sqlx::PgConnection,
+    org: OrgId,
+    id: Uuid,
+    now: OffsetDateTime,
+    rate_limit: RateLimit,
+    metrics_interval_s: Option<u32>,
+    next_metrics_at: Option<OffsetDateTime>,
+) -> Result<(), sqlx::Error> {
+    let (limit, remaining, reset) = rate_limit_columns(rate_limit);
+    sqlx::query(
+        "UPDATE hetzner_projects SET status = 'active', status_message = NULL, failures = 0,
+             rl_limit = coalesce($3, rl_limit), rl_remaining = coalesce($4, rl_remaining),
+             rl_reset_at = coalesce($5, rl_reset_at),
+             last_metrics_at = $6, metrics_interval_s = $7, next_metrics_at = $8
+         WHERE id = $1 AND org_id = $2",
+    )
+    .bind(id)
+    .bind(org.0)
+    .bind(limit)
+    .bind(remaining)
+    .bind(reset)
+    .bind(now)
+    .bind(metrics_interval_s.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+    .bind(next_metrics_at)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -294,7 +341,7 @@ pub struct Failure<'a> {
     pub retry_at: OffsetDateTime,
 }
 
-/// Records a failed cycle and releases the lease. Both tiers wait until `retry_at`.
+/// Records a failed cycle. All tiers wait until `retry_at`. The caller releases the lease.
 pub async fn record_failure(
     conn: &mut sqlx::PgConnection,
     org: OrgId,
@@ -307,7 +354,8 @@ pub async fn record_failure(
              rl_limit = coalesce($6, rl_limit), rl_remaining = coalesce($7, rl_remaining),
              rl_reset_at = coalesce($8, rl_reset_at),
              next_fast_at = $9, next_inventory_at = greatest(coalesce(next_inventory_at, $9), $9),
-             lease_until = NULL
+             next_metrics_at = CASE WHEN next_metrics_at IS NULL THEN NULL
+                                    ELSE greatest(next_metrics_at, $9) END
          WHERE id = $1 AND org_id = $2",
     )
     .bind(id)
@@ -324,7 +372,7 @@ pub async fn record_failure(
     Ok(())
 }
 
-/// Releases a lease without recording a cycle (e.g. the token could not be decrypted).
+/// Releases the lease after a cycle (or several tiers in a row) of a claim.
 pub async fn release(db: &PgPool, org: OrgId, id: Uuid) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE hetzner_projects SET lease_until = NULL WHERE id = $1 AND org_id = $2")
         .bind(id)

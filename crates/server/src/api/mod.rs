@@ -21,8 +21,11 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/projects/{id}/sync", post(projects::sync))
         .route("/projects/{id}/resources", get(projects::resources))
-        .route("/rules", get(rules::list))
-        .route("/rules/{id}", get(rules::get).patch(rules::update))
+        .route("/rules", get(rules::list).post(rules::create))
+        .route(
+            "/rules/{id}",
+            get(rules::get).patch(rules::update).delete(rules::remove),
+        )
         .route("/alerts", get(alerts::list))
         .route("/alerts/{id}", get(alerts::get))
         .route("/api-keys", get(api_keys::list).post(api_keys::create))

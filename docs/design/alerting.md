@@ -27,6 +27,7 @@ stateDiagram-v2
 ```
 
 - The rule's hold time (`for_s`, per check — see [checks](checks.md)) decides `pending → firing`; with `for_s = 0` an alert opens directly as `firing`.
+  Metric checks measure the duration on Hetzner's series instead of the alert's local pending time, so an alert can open directly as `firing` when the series already covers `for_s`.
 - `pending → ok` drops the alert row: it never fired, so there is nothing to notify or keep.
 - A resource that disappears or leaves the rule's scope closes its alert at once (firing → resolved, pending → dropped).
 - `resource_lifecycle` is an event, not a condition: it is stored as an alert that fires and resolves in the same cycle
