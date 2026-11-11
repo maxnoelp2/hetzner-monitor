@@ -22,6 +22,32 @@ pub struct ResourceView {
     pub deleted_at: Option<OffsetDateTime>,
 }
 
+/// A resource as the rule engine sees it.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ResourceRow {
+    pub id: Uuid,
+    pub kind: String,
+    pub hetzner_id: i64,
+    pub name: String,
+    pub labels: Json<Value>,
+    pub snapshot: Json<Value>,
+}
+
+impl ResourceRow {
+    /// Labels as a map (empty if the stored value is not an object).
+    pub fn label_map(&self) -> serde_json::Map<String, Value> {
+        self.labels.0.as_object().cloned().unwrap_or_default()
+    }
+}
+
+/// Result of applying one kind: counts plus the ids of created and deleted resources.
+#[derive(Debug, Default)]
+pub struct Applied {
+    pub counts: KindCounts,
+    pub created: Vec<Uuid>,
+    pub deleted: Vec<Uuid>,
+}
+
 /// Counts for one kind after applying a sync.
 #[derive(Debug, Default, Clone, Copy, serde::Serialize, PartialEq, Eq)]
 pub struct KindCounts {
@@ -38,19 +64,22 @@ pub async fn apply(
     kind: ResourceKind,
     items: &[RawResource],
     now: OffsetDateTime,
-) -> Result<KindCounts, sqlx::Error> {
-    let mut counts = KindCounts {
-        seen: items.len() as u64,
-        ..KindCounts::default()
+) -> Result<Applied, sqlx::Error> {
+    let mut applied = Applied {
+        counts: KindCounts {
+            seen: items.len() as u64,
+            ..KindCounts::default()
+        },
+        ..Applied::default()
     };
     for item in items {
-        let inserted: bool = sqlx::query_scalar(
+        let (id, inserted): (Uuid, bool) = sqlx::query_as(
             "INSERT INTO resources (project_id, kind, hetzner_id, name, labels, snapshot, first_seen_at, last_seen_at)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
              ON CONFLICT (project_id, kind, hetzner_id) DO UPDATE SET
                  name = EXCLUDED.name, labels = EXCLUDED.labels, snapshot = EXCLUDED.snapshot,
                  last_seen_at = EXCLUDED.last_seen_at, deleted_at = NULL
-             RETURNING (xmax = 0)",
+             RETURNING id, (xmax = 0)",
         )
         .bind(project_id)
         .bind(kind.as_str())
@@ -62,22 +91,74 @@ pub async fn apply(
         .fetch_one(&mut *conn)
         .await?;
         if inserted {
-            counts.new += 1;
+            applied.counts.new += 1;
+            applied.created.push(id);
         }
     }
     let ids: Vec<i64> = items.iter().map(|i| i.id).collect();
-    counts.deleted = sqlx::query(
+    applied.deleted = sqlx::query_scalar(
         "UPDATE resources SET deleted_at = $3
-         WHERE project_id = $1 AND kind = $2 AND deleted_at IS NULL AND NOT (hetzner_id = ANY($4))",
+         WHERE project_id = $1 AND kind = $2 AND deleted_at IS NULL AND NOT (hetzner_id = ANY($4))
+         RETURNING id",
     )
     .bind(project_id)
     .bind(kind.as_str())
     .bind(now)
     .bind(&ids)
-    .execute(&mut *conn)
-    .await?
-    .rows_affected();
-    Ok(counts)
+    .fetch_all(&mut *conn)
+    .await?;
+    applied.counts.deleted = applied.deleted.len() as u64;
+    Ok(applied)
+}
+
+/// Current (not deleted) resources of the given kinds. `project_id` must be tenant-checked.
+pub async fn active(
+    conn: &mut PgConnection,
+    project_id: Uuid,
+    kinds: &[&str],
+) -> Result<Vec<ResourceRow>, sqlx::Error> {
+    let kinds: Vec<String> = kinds.iter().map(|k| (*k).to_owned()).collect();
+    sqlx::query_as(
+        "SELECT id, kind, hetzner_id, name, labels, snapshot FROM resources
+         WHERE project_id = $1 AND kind = ANY($2) AND deleted_at IS NULL
+         ORDER BY kind, hetzner_id",
+    )
+    .bind(project_id)
+    .bind(&kinds)
+    .fetch_all(&mut *conn)
+    .await
+}
+
+/// Resources of a project by id (deleted ones included). `project_id` must be tenant-checked.
+pub async fn by_ids(
+    conn: &mut PgConnection,
+    project_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<ResourceRow>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    sqlx::query_as(
+        "SELECT id, kind, hetzner_id, name, labels, snapshot FROM resources
+         WHERE project_id = $1 AND id = ANY($2) ORDER BY kind, hetzner_id",
+    )
+    .bind(project_id)
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await
+}
+
+/// Number of current resources per kind. `project_id` must be tenant-checked.
+pub async fn counts_by_kind(
+    conn: &mut PgConnection,
+    project_id: Uuid,
+) -> Result<Vec<(String, i64)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT kind, count(*) FROM resources WHERE project_id = $1 AND deleted_at IS NULL GROUP BY kind",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *conn)
+    .await
 }
 
 /// Resources of a project of this org, optionally filtered by kind.

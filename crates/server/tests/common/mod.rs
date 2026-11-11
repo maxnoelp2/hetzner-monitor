@@ -146,3 +146,61 @@ pub async fn mock_unauthorized(server: &MockServer) {
         .mount(server)
         .await;
 }
+
+/// A server object as Hetzner returns it (only the fields the checks read).
+pub fn server_json(id: i64, name: &str, status: &str) -> Value {
+    json!({
+        "id": id, "name": name, "status": status, "labels": { "env": "test" },
+        "outgoing_traffic": 0, "ingoing_traffic": 0, "included_traffic": 20_000_000_000_000_u64
+    })
+}
+
+/// Mounts a Hetzner project with the given server and load balancer objects.
+/// Resets previous mocks so tests can change the project between cycles.
+pub async fn mock_project(server: &MockServer, servers: &[Value], load_balancers: &[Value]) {
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/servers"))
+        .and(query_param("per_page", "1"))
+        .respond_with(ok_json(listing(
+            "servers",
+            &json!(servers.iter().take(1).collect::<Vec<_>>()),
+        )))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/servers"))
+        .and(query_param("per_page", "50"))
+        .respond_with(ok_json(listing("servers", &json!(servers))))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/load_balancers"))
+        .respond_with(ok_json(listing("load_balancers", &json!(load_balancers))))
+        .mount(server)
+        .await;
+    for collection in ["volumes", "certificates", "floating_ips", "primary_ips"] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{collection}")))
+            .respond_with(ok_json(listing(collection, &json!([]))))
+            .mount(server)
+            .await;
+    }
+}
+
+/// Makes every Hetzner request fail with `status` (and optional rate-limit reset header).
+pub async fn mock_failure(server: &MockServer, status: u16, code: &str, reset_at: Option<i64>) {
+    server.reset().await;
+    let mut response = ResponseTemplate::new(status)
+        .set_body_json(json!({ "error": { "code": code, "message": "mocked failure" } }));
+    if let Some(reset) = reset_at {
+        response = response
+            .insert_header("RateLimit-Limit", "3600")
+            .insert_header("RateLimit-Remaining", "0")
+            .insert_header("RateLimit-Reset", reset.to_string().as_str());
+    }
+    Mock::given(method("GET"))
+        .respond_with(response)
+        .mount(server)
+        .await;
+}

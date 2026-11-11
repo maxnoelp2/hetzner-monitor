@@ -1,7 +1,9 @@
 //! `/api/v1` routes.
 
+mod alerts;
 mod api_keys;
 mod projects;
+mod rules;
 
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection};
@@ -19,6 +21,10 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/projects/{id}/sync", post(projects::sync))
         .route("/projects/{id}/resources", get(projects::resources))
+        .route("/rules", get(rules::list))
+        .route("/rules/{id}", get(rules::get).patch(rules::update))
+        .route("/alerts", get(alerts::list))
+        .route("/alerts/{id}", get(alerts::get))
         .route("/api-keys", get(api_keys::list).post(api_keys::create))
         .route("/api-keys/{id}", delete(api_keys::revoke))
 }

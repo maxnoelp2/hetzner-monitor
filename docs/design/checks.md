@@ -1,6 +1,6 @@
 # Design: Checks
 
-Status: **accepted** (scope) / defaults **proposed** · Crate: `crates/core`
+Status: **accepted** (scope); `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, `hetzner_api` **implemented** (M2), the rest **proposed** · Crate: `crates/core` (`checks`)
 
 A check is a Rust type that takes an inventory snapshot and/or a metric series and returns a
 value plus a boolean condition. Checks are pure: no IO, unit-tested with fixtures.
@@ -20,6 +20,28 @@ value plus a boolean condition. Checks are pure: no IO, unit-tested with fixture
 | `hygiene_protection` | inventory | delete/rebuild protection off | info |
 | `hygiene_orphans` | inventory | volume without `server`; IP unassigned | info |
 | `cost_change` | inventory | estimated monthly cost (`/pricing` × inventory) +X % vs. previous day | info |
+| `hetzner_api` | every cycle | project status ≠ `active` (system alert, [invariant 6](alerting.md#data-source-failure-invariant-6)) | critical |
+
+## Default rules and params (M2)
+
+Created per project on connect. Params are validated on `PATCH /rules/{id}`; unknown fields are rejected.
+
+| Rule | `check_type` | Params (defaults) | Severity |
+|---|---|---|---|
+| Server not running | `server_status` | `for_s` 120, `transitional_grace_s` 600 | critical |
+| Resource created or deleted | `resource_lifecycle` | — | info |
+| Load balancer target unhealthy | `lb_target_health` | `for_s` 120 | critical |
+| Traffic quota 80 % used | `traffic_quota` | `threshold_pct` 80, `for_s` 0 | warning |
+| Traffic quota exhausted | `traffic_quota` | `threshold_pct` 100, `for_s` 0 | critical |
+| Hetzner API unreachable | `hetzner_api` | — | critical |
+
+- `server_status`: "≥ 2 cycles" is expressed as `for_s = 120`. Transitional statuses (`initializing`, `starting`,
+  `migrating`, `rebuilding`, `deleting`) use `max(for_s, transitional_grace_s)` instead.
+- `lb_target_health`: counts every target service (`targets[].health_status[]`, and the nested `targets[]` of
+  label-selector targets); `unknown` counts as not healthy, which `for_s` absorbs for new targets. Value = number of bad services.
+- `traffic_quota`: servers and load balancers; value = percent used (one decimal). `null` traffic fields → no data, condition false.
+  Two default rules instead of one with escalating severity: at ≥ 100 % both are open.
+- Field shapes verified against the OpenAPI spec on 2026-11-11.
 
 ## Notes and assumptions
 

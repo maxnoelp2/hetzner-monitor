@@ -1,13 +1,17 @@
 # Design: Rules, alert lifecycle, notifications
 
-Status: **proposed** · Crates: `crates/core` (state machine), `crates/notify` (channels), `crates/server` (queue worker)
+Status: rules, state machine, data-source failure **implemented** (M2); notifications, ack, silences, re-notify **proposed** (M4) · Crates: `crates/core` (state machine, selectors), `crates/server` (`engine`), `crates/notify` (channels)
 
 ## Rules
 
 Rule = `check_type` + `params` (threshold, duration) + **scope** + severity + optional channels.
 
 - Scope: whole project (or all projects of the org), a single resource, or a **Hetzner label selector** (e.g. `env=prod,role!=db`) — reuse Hetzner's selector syntax so users learn nothing new.
-- On project connect, **default rules** are created (`is_default = true`, see [checks](checks.md)). Users can edit or disable them.
+  Supported: `k=v`, `k==v`, `k!=v`, `k`, `!k`, `k in (a,b)`, `k notin (a,b)`; as in Kubernetes, `!=` and `notin` also match resources without the key.
+- On project connect, **default rules** are created (`is_default = true`, see [checks](checks.md)) by the SQL function
+  `hm_create_default_rules` (migration 0003, the single source of the defaults). Users can edit or disable them via
+  `PATCH /rules/{id}`; creating and deleting custom rules comes later.
+- Disabling a rule closes its open alerts (firing → resolved, pending → dropped).
 
 ## Alert state machine — one per (rule, resource)
 
@@ -22,6 +26,11 @@ stateDiagram-v2
   resolved --> [*]
 ```
 
+- The rule's hold time (`for_s`, per check — see [checks](checks.md)) decides `pending → firing`; with `for_s = 0` an alert opens directly as `firing`.
+- `pending → ok` drops the alert row: it never fired, so there is nothing to notify or keep.
+- A resource that disappears or leaves the rule's scope closes its alert at once (firing → resolved, pending → dropped).
+- `resource_lifecycle` is an event, not a condition: it is stored as an alert that fires and resolves in the same cycle
+  (events `fired` + `resolved`), so notifications (M4) treat it like any other alert. The first sync of a project reports nothing.
 - **Notify** on `firing` and `resolved` only (not `pending`).
 - **Dedup:** at most one open alert per (rule, resource) — partial unique index.
 - **Flapping guard:** resolve only after 2 consecutive good cycles.
@@ -34,6 +43,10 @@ stateDiagram-v2
 If a project is `degraded` or `invalid_token`, availability checks for its resources are **suspended**
 and one **system alert** ("Hetzner API unreachable for project X" / "token invalid") is raised.
 A Hetzner outage must never arrive as "all servers down".
+
+Implementation: a failed cycle brings no data, so the engine evaluates only the per-project `hetzner_api` rule
+(condition: project status ≠ `active`, no hold time); every other alert keeps its state. The system alert resolves
+after two successful cycles, like any other alert.
 
 ## Notifications
 

@@ -14,9 +14,10 @@ no agent on the servers, no Prometheus stack.
 
 ## Current status
 
-**M1 done** — bootstrap CLI, API keys, envelope-encrypted Hetzner tokens, read-only `hm-hcloud` client,
-connect project + inventory sync via `/api/v1`. No scheduler, rules or alerts yet. Next milestone is **M2**
-(scheduler with 3 tiers and budget, rule engine, alert lifecycle, first checks).
+**M2 implemented, waiting for the owner's real power-off test** — on top of M1 (bootstrap, API keys, encrypted tokens,
+`hm-hcloud`, connect + inventory): scheduler with fast/inventory tiers, budget and leases, rule engine, alert lifecycle,
+checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, system alert `hetzner_api`, rules/alerts API.
+No notifications yet (M4). Next milestone is **M3** (metric checks, Hetzner-specific, hygiene, cost).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -47,13 +48,15 @@ cargo test -p hm-hcloud -- --ignored live_                 # live TLS check agai
 docker compose -f deploy/docker-compose.yml up --build -d                       # app on http://127.0.0.1:8080
 docker compose -f deploy/docker-compose.yml run --rm app bootstrap --org <name> --email <email>  # prints admin key once
 scripts/smoke-m1.sh                                        # real-project smoke test (HCLOUD_TOKEN, HM_API_KEY from env)
+scripts/smoke-m2.sh                                        # watch alerts while powering a TEST server off/on
 ```
 
 - Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.
 - New migrations: add `migrations/NNNN_description.sql`; they are embedded and applied on startup.
 - Host ports are configurable via `HM_POSTGRES_PORT` / `HM_PORT` (see `deploy/.env.example`).
 - sqlx 0.9 rejects dynamically built SQL strings: write queries as literals (use `concat!` with a macro for shared column lists).
-- Tests use `tests/common/mod.rs`: `state()` with a fixed test master key and a wiremock Hetzner, `org_with_key()`, `call()`.
+- Tests use `tests/common/mod.rs`: `state()` with a fixed test master key and a wiremock Hetzner, `org_with_key()`, `call()`,
+  `mock_project()` / `mock_failure()`. Drive poll cycles with `hm_server::scheduler::tick(&state, now)` and a synthetic clock.
 
 ## How to work here
 

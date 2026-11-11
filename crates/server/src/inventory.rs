@@ -1,24 +1,21 @@
-//! Connecting projects and syncing their inventory from Hetzner.
-
-use std::collections::BTreeMap;
+//! Connecting projects and syncing them on demand. Both run an inventory [`cycle`].
 
 use axum::http::StatusCode;
 use hm_core::crypto;
-use hm_hcloud::{RateLimit, ResourceKind, Token};
+use hm_hcloud::Token;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::cycle::{self, CycleError, SyncReport, Tier};
 use crate::error::ApiError;
 use crate::http::AppState;
 use crate::repo::projects::{Inserted, ProjectView};
-use crate::repo::resources::KindCounts;
 use crate::repo::{self, OrgId};
+use crate::scheduler::LEASE;
 
-/// Per-kind counts of one sync, keyed by kind (`server`, …).
-pub type SyncReport = BTreeMap<&'static str, KindCounts>;
-
-/// Validates the token, stores the project with the token sealed, and runs the first sync.
-/// A failing first sync does not undo the connect; the project keeps the error status.
+/// Validates the token, stores the project with the token sealed, creates its default rules,
+/// and runs the first sync. A failing first sync does not undo the connect; the project keeps
+/// the error status and the scheduler retries.
 pub async fn connect(
     state: &AppState,
     org: OrgId,
@@ -40,13 +37,14 @@ pub async fn connect(
 
     let id = Uuid::new_v4();
     let sealed = {
-        let plain = token_plaintext(&token);
+        let plain = token.reveal_for_storage();
         crypto::seal(&state.master_key, id.as_bytes(), plain.as_bytes())
             .map_err(|e| ApiError::internal(&e))?
     };
+    let mut tx = state.db.begin().await?;
     let project =
-        match repo::projects::insert(&state.db, org, id, name, &sealed, &token.hint()).await? {
-            Inserted::Ok(project) => project,
+        match repo::projects::insert(&mut *tx, org, id, name, &sealed, &token.hint()).await? {
+            Inserted::Ok(project) => *project,
             Inserted::NameTaken => {
                 return Err(ApiError::new(
                     StatusCode::CONFLICT,
@@ -55,79 +53,53 @@ pub async fn connect(
                 ));
             }
         };
-    let report = sync_with_token(state, org, project.id, &token).await.ok();
+    repo::rules::create_defaults(&mut *tx, org, project.id).await?;
+    tx.commit().await?;
+
+    let now = OffsetDateTime::now_utc();
+    let report = match repo::projects::try_lease(&state.db, org, id, now, now + LEASE).await? {
+        Some(claimed) => cycle::run(state, &claimed, &token, Tier::Inventory, now)
+            .await
+            .ok(),
+        None => None,
+    };
     let project = repo::projects::get(&state.db, org, project.id)
         .await?
         .unwrap_or(project);
     Ok((project, report))
 }
 
-/// Re-syncs a project of this org.
+/// Re-syncs a project of this org now (inventory tier), regardless of its status.
+/// Fails with `409 sync_in_progress` while another cycle holds the project.
 pub async fn sync(state: &AppState, org: OrgId, project_id: Uuid) -> Result<SyncReport, ApiError> {
-    let sealed = repo::projects::sealed_token(&state.db, org, project_id)
-        .await?
-        .ok_or_else(ApiError::not_found)?;
-    let plain = crypto::open(&state.master_key, project_id.as_bytes(), &sealed)
-        .map_err(|e| ApiError::internal(&e))?;
-    let token = Token::new(String::from_utf8(plain.to_vec()).map_err(|e| ApiError::internal(&e))?);
-    sync_with_token(state, org, project_id, &token).await
-}
-
-async fn sync_with_token(
-    state: &AppState,
-    org: OrgId,
-    project_id: Uuid,
-    token: &Token,
-) -> Result<SyncReport, ApiError> {
-    let mut fetched = Vec::with_capacity(ResourceKind::ALL.len());
-    let mut rate_limit = RateLimit::default();
-    for kind in ResourceKind::ALL {
-        match state.hcloud.list(token, kind).await {
-            Ok(listed) => {
-                rate_limit = listed.rate_limit;
-                fetched.push((kind, listed.items));
-            }
-            Err(err) => {
-                let status = match err {
-                    hm_hcloud::Error::InvalidToken => "invalid_token",
-                    _ => "degraded",
-                };
-                tracing::warn!(project_id = %project_id, kind = %kind, error = %err, "inventory sync failed");
-                repo::projects::set_status(
-                    &state.db,
-                    org,
-                    project_id,
-                    status,
-                    Some(&err.to_string()),
-                    None,
-                    None,
+    let now = OffsetDateTime::now_utc();
+    let Some(claimed) =
+        repo::projects::try_lease(&state.db, org, project_id, now, now + LEASE).await?
+    else {
+        return Err(
+            if repo::projects::exists(&state.db, org, project_id).await? {
+                ApiError::new(
+                    StatusCode::CONFLICT,
+                    "sync_in_progress",
+                    "a poll cycle for this project is running, try again in a moment",
                 )
-                .await?;
-                return Err(hetzner_error(&err));
-            }
+            } else {
+                ApiError::not_found()
+            },
+        );
+    };
+    let result = match cycle::open_token(state, &claimed) {
+        Ok(token) => cycle::run(state, &claimed, &token, Tier::Inventory, now).await,
+        Err(err) => Err(err),
+    };
+    match result {
+        Ok(report) => Ok(report),
+        Err(CycleError::Hetzner(err)) => Err(hetzner_error(&err)),
+        Err(err) => {
+            let _ = repo::projects::release(&state.db, org, project_id).await;
+            Err(ApiError::internal(&err))
         }
     }
-
-    let now = OffsetDateTime::now_utc();
-    let mut tx = state.db.begin().await?;
-    let mut report = SyncReport::new();
-    for (kind, items) in &fetched {
-        let counts = repo::resources::apply(&mut tx, project_id, *kind, items, now).await?;
-        report.insert(kind.as_str(), counts);
-    }
-    repo::projects::set_status(
-        &mut *tx,
-        org,
-        project_id,
-        "active",
-        None,
-        Some(rate_limit),
-        Some(now),
-    )
-    .await?;
-    tx.commit().await?;
-    tracing::info!(project_id = %project_id, "inventory synced");
-    Ok(report)
 }
 
 fn hetzner_error(err: &hm_hcloud::Error) -> ApiError {
@@ -139,9 +111,4 @@ fn hetzner_error(err: &hm_hcloud::Error) -> ApiError {
         _ => (StatusCode::BAD_GATEWAY, "hetzner_unavailable"),
     };
     ApiError::new(status, code, err.to_string())
-}
-
-/// The token's plaintext for sealing. Kept in a zeroizing buffer.
-fn token_plaintext(token: &Token) -> zeroize::Zeroizing<String> {
-    token.reveal_for_storage()
 }
