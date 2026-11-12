@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use hm_core::{budget, crypto, series};
+use hm_core::{budget, cost, crypto, series};
 use hm_hcloud::{MetricType, RateLimit, RawResource, ResourceKind, Token};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -87,21 +87,11 @@ pub async fn run(
     let org = project.org();
     let kinds = kinds_for(state, project.id, tier).await?;
 
-    let mut fetched: Vec<(ResourceKind, Vec<RawResource>)> = Vec::with_capacity(kinds.len());
-    let mut rate_limit = RateLimit::default();
-    for kind in kinds {
-        match state.hcloud.list(token, kind).await {
-            Ok(listed) => {
-                rate_limit = listed.rate_limit;
-                fetched.push((kind, listed.items));
-            }
-            Err(err) => {
-                tracing::warn!(project_id = %project.id, kind = %kind, error = %err, "poll cycle failed");
-                record_failure(state, project, &err, now).await?;
-                return Err(CycleError::Hetzner(err));
-            }
-        }
-    }
+    let Fetched {
+        lists: fetched,
+        pricing,
+        rate_limit,
+    } = fetch(state, project, token, &kinds, tier == Tier::Inventory, now).await?;
 
     let mut tx = state.db.begin().await?;
     let mut report = SyncReport::new();
@@ -153,10 +143,15 @@ pub async fn run(
     };
     repo::projects::record_success(&mut tx, org, project.id, now, &success).await?;
 
+    if let Some(pricing) = &pricing {
+        record_snapshots(&mut tx, org, project.id, pricing, now).await?;
+    }
+
     let changes = Changes {
         created: &created,
         deleted: &deleted,
         lifecycle: project.last_inventory_at.is_some(),
+        inventory,
     };
     let project_state = ProjectState {
         org,
@@ -168,6 +163,60 @@ pub async fn run(
     tx.commit().await?;
     tracing::debug!(project_id = %project.id, ?tier, "poll cycle done");
     Ok(report)
+}
+
+/// What a fast or inventory cycle fetched from Hetzner.
+struct Fetched {
+    lists: Vec<(ResourceKind, Vec<RawResource>)>,
+    /// `/pricing`, fetched on inventory cycles only.
+    pricing: Option<serde_json::Value>,
+    /// Rate limit after the last request.
+    rate_limit: RateLimit,
+}
+
+/// Lists `kinds` (and on inventory cycles `/pricing`). A Hetzner error is recorded on the
+/// project before it is returned.
+async fn fetch(
+    state: &AppState,
+    project: &Claimed,
+    token: &Token,
+    kinds: &[ResourceKind],
+    with_pricing: bool,
+    now: OffsetDateTime,
+) -> Result<Fetched, CycleError> {
+    let mut fetched = Fetched {
+        lists: Vec::with_capacity(kinds.len()),
+        pricing: None,
+        rate_limit: RateLimit::default(),
+    };
+    for kind in kinds {
+        match state.hcloud.list(token, *kind).await {
+            Ok(listed) => {
+                fetched.rate_limit = listed.rate_limit;
+                fetched.lists.push((*kind, listed.items));
+            }
+            Err(err) => {
+                tracing::warn!(project_id = %project.id, kind = %kind, error = %err, "poll cycle failed");
+                record_failure(state, project, &err, now).await?;
+                return Err(CycleError::Hetzner(err));
+            }
+        }
+    }
+    // Prices for the cost estimate: one extra request per inventory cycle.
+    if with_pricing {
+        match state.hcloud.pricing(token).await {
+            Ok(priced) => {
+                fetched.rate_limit = priced.rate_limit;
+                fetched.pricing = Some(priced.raw);
+            }
+            Err(err) => {
+                tracing::warn!(project_id = %project.id, error = %err, "pricing request failed");
+                record_failure(state, project, &err, now).await?;
+                return Err(CycleError::Hetzner(err));
+            }
+        }
+    }
+    Ok(fetched)
 }
 
 /// Metrics cycle: one request per server in scope of a metric rule, evaluated on the series
@@ -254,6 +303,33 @@ async fn run_metrics(
     tx.commit().await?;
     tracing::debug!(project_id = %project.id, servers = fetched.len(), "metrics cycle done");
     Ok(())
+}
+
+/// Inventory cycles store the derived daily snapshots (ADR-0011): today's cost estimate and
+/// the day's first traffic counter of each server and load balancer.
+async fn record_snapshots(
+    conn: &mut sqlx::PgConnection,
+    org: OrgId,
+    project_id: Uuid,
+    pricing: &serde_json::Value,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    let all: Vec<&str> = ResourceKind::ALL.iter().map(|k| k.as_str()).collect();
+    let resources = repo::resources::active(conn, project_id, &all).await?;
+    let estimate = cost::estimate(
+        pricing,
+        resources.iter().map(|r| (r.kind.as_str(), &r.snapshot.0)),
+    );
+    repo::snapshots::upsert_cost(conn, org, project_id, now, &estimate).await?;
+    let samples: Vec<(Uuid, i64)> = resources
+        .iter()
+        .filter(|r| r.kind == "server" || r.kind == "load_balancer")
+        .filter_map(|r| {
+            let bytes = r.snapshot.0.get("outgoing_traffic")?.as_u64()?;
+            Some((r.id, i64::try_from(bytes).ok()?))
+        })
+        .collect();
+    repo::snapshots::record_traffic(conn, org, project_id, now, &samples).await
 }
 
 /// Kinds to fetch: the fast tier skips load balancers while the project has none.

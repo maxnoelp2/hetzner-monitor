@@ -1,7 +1,9 @@
 //! Rule engine: evaluates a project's enabled rules after a poll cycle and persists alert
 //! transitions (docs/design/alerting.md). Runs inside the cycle's transaction.
 //!
-//! - A **resource cycle** (fast / inventory) evaluates availability and inventory checks.
+//! - A **resource cycle** (fast / inventory) evaluates availability checks; inventory cycles also
+//!   evaluate the inventory-only checks (certificates, deprecation, hygiene, cost, traffic
+//!   forecast) over all six kinds. Fast cycles leave those alerts untouched.
 //! - A **metrics cycle** evaluates metric checks (`cpu`, `network`, `disk_io`) on the series
 //!   Hetzner just returned (nothing is stored, invariant 8).
 //! - A **failed cycle** brought no data: only the `hetzner_api` system rule is evaluated; every
@@ -10,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use hm_core::alert::{self, Open, Transition};
-use hm_core::checks::{self, CheckType, Outcome};
+use hm_core::checks::{self, CheckType, Context, Outcome};
 use hm_core::selector::Selector;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
@@ -21,8 +23,19 @@ use crate::repo::resources::ResourceRow;
 use crate::repo::rules::RuleView;
 use crate::repo::{self, OrgId};
 
-/// Kinds that per-resource checks look at; refreshed by the fast and inventory tiers.
-const EVALUATED_KINDS: [&str; 2] = ["server", "load_balancer"];
+/// Kinds refreshed by the fast tier (and the metrics tier's servers).
+const FAST_KINDS: [&str; 2] = ["server", "load_balancer"];
+/// Kinds refreshed by the inventory tier.
+const ALL_KINDS: [&str; 6] = [
+    "server",
+    "load_balancer",
+    "volume",
+    "certificate",
+    "floating_ip",
+    "primary_ip",
+];
+/// Age of the traffic sample a forecast extrapolates from (at least).
+const FORECAST_BASELINE: time::Duration = time::Duration::seconds(checks::FORECAST_MIN_SPAN_S);
 
 /// What the resource cycle changed.
 pub struct Changes<'a> {
@@ -30,6 +43,8 @@ pub struct Changes<'a> {
     pub deleted: &'a [Uuid],
     /// False on a project's first successful sync: everything is "new" then, which is not news.
     pub lifecycle: bool,
+    /// True for inventory cycles: all kinds are fresh, inventory-only checks are evaluated.
+    pub inventory: bool,
 }
 
 /// Metric series of one server, as fetched by a metrics cycle.
@@ -161,11 +176,21 @@ pub async fn evaluate(
             .map(|a| ((a.rule_id, a.resource_id), a))
             .collect();
 
+    let inventory = matches!(input, Input::Resources(c) if c.inventory);
     let resources = match input {
         Input::Failed => Vec::new(),
-        Input::Resources(_) | Input::Metrics(_) => {
-            repo::resources::active(conn, project.id, &EVALUATED_KINDS).await?
+        Input::Resources(_) if inventory => {
+            repo::resources::active(conn, project.id, &ALL_KINDS).await?
         }
+        Input::Resources(_) | Input::Metrics(_) => {
+            repo::resources::active(conn, project.id, &FAST_KINDS).await?
+        }
+    };
+    let baselines = if inventory {
+        repo::snapshots::traffic_baselines(conn, project.org, project.id, now - FORECAST_BASELINE)
+            .await?
+    } else {
+        HashMap::new()
     };
     let (created, deleted) = match input {
         Input::Resources(c) if c.lifecycle => (
@@ -180,6 +205,13 @@ pub async fn evaluate(
             continue;
         };
         let per_resource = check.kinds();
+        if matches!(input, Input::Resources(_))
+            && !inventory
+            && check.inventory_only(&rule.params.0)
+        {
+            // Not fresh on a fast cycle: keep these alerts as they are.
+            continue;
+        }
         match (check, input) {
             (CheckType::HetznerApi, _) => {
                 let outcome = api_outcome(project);
@@ -193,49 +225,40 @@ pub async fn evaluate(
                     }
                 }
             }
+            (CheckType::CostChange, Input::Resources(_)) => {
+                let prev = open.remove(&(rule.id, None));
+                evaluate_cost(conn, project, rule, check, prev, now).await?;
+            }
             (
-                CheckType::ServerStatus | CheckType::LbTargetHealth | CheckType::TrafficQuota,
+                CheckType::ServerStatus
+                | CheckType::LbTargetHealth
+                | CheckType::TrafficQuota
+                | CheckType::CertificateExpiry
+                | CheckType::Deprecation
+                | CheckType::HygieneBackups
+                | CheckType::HygieneProtection
+                | CheckType::HygieneOrphans,
                 Input::Resources(_),
             ) => {
                 let in_scope = resources
                     .iter()
                     .filter(|r| per_resource.contains(&r.kind.as_str()) && scope.contains(r));
-                let eval = |r: &ResourceRow| check.evaluate(&rule.params.0, &r.snapshot.0);
+                let eval = |r: &ResourceRow| {
+                    let ctx = Context {
+                        now: now.unix_timestamp(),
+                        kind: &r.kind,
+                        traffic_baseline: baselines.get(&r.id).copied(),
+                    };
+                    check.evaluate(&rule.params.0, &r.snapshot.0, &ctx)
+                };
                 evaluate_each(conn, rule, project.id, in_scope, eval, &mut open, now).await?;
             }
             (CheckType::Cpu | CheckType::Network | CheckType::DiskIo, Input::Metrics(series)) => {
-                #[allow(clippy::cast_precision_loss)]
-                let now_s = now.unix_timestamp() as f64;
-                let mut fetched = Vec::new();
-                for r in resources
+                let in_scope = resources
                     .iter()
-                    .filter(|r| per_resource.contains(&r.kind.as_str()) && scope.contains(r))
-                {
-                    if series.contains_key(&r.id) {
-                        fetched.push(r);
-                    } else {
-                        // Not fetched this cycle: leave its alert as it is.
-                        open.remove(&(rule.id, Some(r.id)));
-                    }
-                }
-                let eval = |r: &ResourceRow| {
-                    let data = &series[&r.id];
-                    check.evaluate_metrics(
-                        &rule.params.0,
-                        &r.snapshot.0,
-                        &data.series,
-                        data.step,
-                        now_s,
-                    )
-                };
-                evaluate_each(
-                    conn,
-                    rule,
-                    project.id,
-                    fetched.into_iter(),
-                    eval,
-                    &mut open,
-                    now,
+                    .filter(|r| per_resource.contains(&r.kind.as_str()) && scope.contains(r));
+                evaluate_metrics(
+                    conn, rule, check, project.id, in_scope, series, &mut open, now,
                 )
                 .await?;
             }
@@ -245,6 +268,68 @@ pub async fn evaluate(
         }
     }
     Ok(())
+}
+
+/// The project-level `cost_change` rule on today's estimate (written by this inventory cycle)
+/// and the latest estimate of an earlier day. Without today's estimate the alert is left alone.
+async fn evaluate_cost(
+    conn: &mut PgConnection,
+    project: &ProjectState<'_>,
+    rule: &RuleView,
+    check: CheckType,
+    prev: Option<OpenAlert>,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    let (current, previous) =
+        repo::snapshots::cost_points(conn, project.org, project.id, now.date()).await?;
+    let Some(current) = current else {
+        return Ok(());
+    };
+    match check.evaluate_cost(&rule.params.0, &current, previous.as_ref()) {
+        Ok(Some(outcome)) => apply(conn, rule, project.id, None, prev, &outcome, now).await,
+        Ok(None) => Ok(()),
+        Err(error) => {
+            tracing::warn!(rule_id = %rule.id, %error, "invalid params, rule skipped");
+            Ok(())
+        }
+    }
+}
+
+/// A metric rule on the series of this metrics cycle. Servers in scope that were not fetched
+/// keep their alerts as they are.
+#[allow(clippy::too_many_arguments)]
+async fn evaluate_metrics<'r>(
+    conn: &mut PgConnection,
+    rule: &RuleView,
+    check: CheckType,
+    project_id: Uuid,
+    in_scope: impl Iterator<Item = &'r ResourceRow>,
+    series: &HashMap<Uuid, ServerSeries>,
+    open: &mut HashMap<(Uuid, Option<Uuid>), OpenAlert>,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    #[allow(clippy::cast_precision_loss)]
+    let now_s = now.unix_timestamp() as f64;
+    let mut fetched = Vec::new();
+    for r in in_scope {
+        if series.contains_key(&r.id) {
+            fetched.push(r);
+        } else {
+            // Not fetched this cycle: leave its alert as it is.
+            open.remove(&(rule.id, Some(r.id)));
+        }
+    }
+    let eval = |r: &ResourceRow| {
+        let data = &series[&r.id];
+        check.evaluate_metrics(
+            &rule.params.0,
+            &r.snapshot.0,
+            &data.series,
+            data.step,
+            now_s,
+        )
+    };
+    evaluate_each(conn, rule, project_id, fetched.into_iter(), eval, open, now).await
 }
 
 /// Applies one rule to each resource; closes the rule's alerts of resources not evaluated

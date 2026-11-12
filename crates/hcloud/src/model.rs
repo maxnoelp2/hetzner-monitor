@@ -161,6 +161,13 @@ pub struct Metrics {
     pub rate_limit: RateLimit,
 }
 
+/// The `pricing` object of `GET /pricing`, as returned by Hetzner.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Priced {
+    pub raw: Value,
+    pub rate_limit: RateLimit,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ResourceKind, Token};

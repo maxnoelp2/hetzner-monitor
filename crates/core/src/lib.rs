@@ -8,6 +8,7 @@ pub mod alert;
 pub mod apikey;
 pub mod budget;
 pub mod checks;
+pub mod cost;
 pub mod crypto;
 pub mod secret;
 pub mod selector;

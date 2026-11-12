@@ -264,3 +264,37 @@ async fn metrics_of_a_vanished_server_is_a_404_api_error() {
         .unwrap_err();
     assert!(matches!(err, Error::Api { status: 404, .. }), "{err:?}");
 }
+
+#[tokio::test]
+async fn pricing_returns_the_raw_pricing_object() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/pricing"))
+        .and(header("authorization", "Bearer test-token-0000"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("RateLimit-Limit", "3600")
+                .insert_header("RateLimit-Remaining", "3580")
+                .set_body_json(json!({ "pricing": {
+                    "currency": "EUR", "vat_rate": "19.00",
+                    "volume": { "price_per_gb_month": { "net": "0.0440000000", "gross": "0.0523600000000000" } },
+                    "server_backup": { "percentage": "20.00" }
+                }})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let priced = client(&server).pricing(&token()).await.unwrap();
+    assert_eq!(priced.raw["currency"], "EUR");
+    assert_eq!(priced.raw["server_backup"]["percentage"], "20.00");
+    assert_eq!(priced.rate_limit.remaining, Some(3580));
+
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path("/pricing"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "nope": {} })))
+        .mount(&server)
+        .await;
+    let err = client(&server).pricing(&token()).await.unwrap_err();
+    assert!(matches!(err, Error::Decode(_)), "{err:?}");
+}

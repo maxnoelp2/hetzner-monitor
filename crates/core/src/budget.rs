@@ -29,9 +29,16 @@ pub const fn fast_cost(servers: u32, load_balancers: u32) -> u32 {
     list_requests(servers) + lbs
 }
 
-/// Requests per inventory cycle: one listing per kind.
+/// Extra requests per inventory cycle besides the listings: `GET /pricing`.
+pub const INVENTORY_EXTRA_REQUESTS: u32 = 1;
+
+/// Requests per inventory cycle: one listing per kind, plus `GET /pricing`.
 pub fn inventory_cost(counts_per_kind: &[u32]) -> u32 {
-    counts_per_kind.iter().map(|n| list_requests(*n)).sum()
+    counts_per_kind
+        .iter()
+        .map(|n| list_requests(*n))
+        .sum::<u32>()
+        + INVENTORY_EXTRA_REQUESTS
 }
 
 /// Requests per hour this tool may use: `limit × share`, rounded down.
@@ -102,7 +109,7 @@ mod tests {
         assert_eq!(list_requests(51), 2);
         assert_eq!(fast_cost(100, 0), 2);
         assert_eq!(fast_cost(9, 1), 2);
-        assert_eq!(inventory_cost(&[9, 0, 0, 0, 0, 16]), 6);
+        assert_eq!(inventory_cost(&[9, 0, 0, 0, 0, 16]), 7);
         assert_eq!(fixed_h(2, 10), 2 * 60 + 10 * 4);
     }
 

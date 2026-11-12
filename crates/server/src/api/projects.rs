@@ -63,6 +63,9 @@ pub async fn get(
     let project = repo::projects::get(&state.db, principal.org, id)
         .await?
         .ok_or_else(ApiError::not_found)?;
+    let cost = repo::snapshots::latest_cost(&state.db, principal.org, id).await?;
+    let mut project = serde_json::to_value(project).map_err(|e| ApiError::internal(&e))?;
+    project["cost_estimate"] = serde_json::to_value(cost).map_err(|e| ApiError::internal(&e))?;
     Ok(Json(json!({ "project": project })))
 }
 

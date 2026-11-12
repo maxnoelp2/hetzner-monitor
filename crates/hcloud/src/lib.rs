@@ -11,4 +11,4 @@ mod model;
 
 pub use client::{Client, DEFAULT_BASE_URL};
 pub use error::Error;
-pub use model::{Listed, MetricType, Metrics, RateLimit, RawResource, ResourceKind, Token};
+pub use model::{Listed, MetricType, Metrics, Priced, RateLimit, RawResource, ResourceKind, Token};

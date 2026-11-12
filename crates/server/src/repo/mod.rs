@@ -8,6 +8,7 @@ pub mod api_keys;
 pub mod projects;
 pub mod resources;
 pub mod rules;
+pub mod snapshots;
 
 use uuid::Uuid;
 

@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::model::{Listed, MetricType, Metrics, RateLimit, RawResource, ResourceKind, Token};
+use crate::model::{
+    Listed, MetricType, Metrics, Priced, RateLimit, RawResource, ResourceKind, Token,
+};
 
 /// Production API base URL.
 pub const DEFAULT_BASE_URL: &str = "https://api.hetzner.cloud/v1";
@@ -117,6 +119,18 @@ impl Client {
         );
         let (body, rate_limit) = self.get_json(token, &query).await?;
         parse_metrics(&body, rate_limit)
+    }
+
+    /// Current prices of the project's account (`GET /pricing`, not paginated). Returned as
+    /// raw JSON: interpreting prices is domain logic (`hm_core::cost`).
+    pub async fn pricing(&self, token: &Token) -> Result<Priced, Error> {
+        let (body, rate_limit) = self.get_json(token, "pricing").await?;
+        let raw = body
+            .get("pricing")
+            .filter(|p| p.is_object())
+            .cloned()
+            .ok_or_else(|| Error::Decode("missing `pricing` object".to_owned()))?;
+        Ok(Priced { raw, rate_limit })
     }
 
     /// The only request method of this crate: authenticated `GET`.

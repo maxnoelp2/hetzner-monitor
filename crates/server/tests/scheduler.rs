@@ -114,11 +114,19 @@ async fn connect_creates_default_rules_and_schedule(pool: PgPool) {
     assert_eq!(
         types,
         [
+            "certificate_expiry",
+            "certificate_expiry",
+            "cost_change",
             "cpu",
+            "deprecation",
             "hetzner_api",
+            "hygiene_backups",
+            "hygiene_orphans",
+            "hygiene_protection",
             "lb_target_health",
             "resource_lifecycle",
             "server_status",
+            "traffic_quota",
             "traffic_quota",
             "traffic_quota"
         ]
@@ -135,8 +143,8 @@ async fn connect_creates_default_rules_and_schedule(pool: PgPool) {
     assert!(project["next_fast_at"].is_string());
     assert!(project["next_inventory_at"].is_string());
     assert_eq!(project["budget_h"], 1800);
-    // 1 server (1 request/min) + 6 inventory listings every 15 min.
-    assert_eq!(project["fixed_h"], 60 + 6 * 4);
+    // 1 server (1 request/min) + 6 inventory listings and /pricing every 15 min.
+    assert_eq!(project["fixed_h"], 60 + 7 * 4);
     assert_eq!(project["metrics_interval_s"], 60);
     // The default `cpu` rule covers the server, so the metrics tier is scheduled.
     assert!(project["next_metrics_at"].is_string());

@@ -3,7 +3,7 @@
 Status: **accepted** ([ADR-0004](../adr/0004-own-minimal-hetzner-client.md)) · Crate: `crates/hcloud`
 
 A small, hand-written client (`reqwest` + `serde`, rustls with the **ring** provider shared with sqlx — no `aws-lc-rs`) for the Hetzner Cloud API.
-**Implemented:** `Client::{new, with_base_url, validate_token, list}`, `Token`, `ResourceKind`, `RawResource { id, name, labels, raw }`, `RateLimit`, `Error` (M1); `Client::server_metrics(token, id, types, start, end, step)` → `Metrics { step, series, rate_limit }` with values parsed to `f64`, sorted by time, non-finite samples dropped (M3a).
+**Implemented:** `Client::{new, with_base_url, validate_token, list}`, `Token`, `ResourceKind`, `RawResource { id, name, labels, raw }`, `RateLimit`, `Error` (M1); `Client::server_metrics(token, id, types, start, end, step)` → `Metrics { step, series, rate_limit }` with values parsed to `f64`, sorted by time, non-finite samples dropped (M3a); `Client::pricing(token)` → `Priced { raw, rate_limit }` (the raw `pricing` object; prices are interpreted in `hm_core::cost`, M3b).
 Facts below are **from spec** as of 2026-11-05 ([OpenAPI spec](https://docs.hetzner.cloud/cloud.spec.json)).
 
 ## Scope — GET only
@@ -14,7 +14,7 @@ Facts below are **from spec** as of 2026-11-05 ([OpenAPI spec](https://docs.hetz
 | `GET /load_balancers` | fast |
 | `GET /servers/{id}/metrics?type=cpu,disk,network` | metrics |
 | `GET /load_balancers/{id}/metrics?type=…` | metrics (not used yet) |
-| `GET /volumes`, `/certificates`, `/floating_ips`, `/primary_ips`, `/server_types`, `/pricing` | inventory |
+| `GET /volumes`, `/certificates`, `/floating_ips`, `/primary_ips`, `/pricing` | inventory |
 
 Write endpoints are **out of scope forever** (invariant 1 in [ARCHITECTURE.md](../../ARCHITECTURE.md#invariants)).
 

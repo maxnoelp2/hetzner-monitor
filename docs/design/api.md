@@ -1,6 +1,6 @@
 # Design: HTTP API
 
-Status: endpoints marked ✅ are **implemented** (M1, M2); the rest **proposed** · Crate: `crates/server`
+Status: endpoints marked ✅ are **implemented** (M1–M3); the rest **proposed** · Crate: `crates/server`
 
 REST under `/api/v1`, JSON. The OpenAPI document is **generated from code** (`utoipa`) and served at
 `/api/v1/openapi.json`; the PWA's TypeScript client is generated from it.
@@ -31,6 +31,8 @@ GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metr
 - Scopes: `read` for GET, `write` for project changes and sync, `admin` for API keys. `admin ⊃ write ⊃ read`.
 - Project responses include the schedule and budget: `failures`, `last_fast_at`, `next_fast_at`, `next_inventory_at`,
   `last_metrics_at`, `next_metrics_at`, `budget_share`, `budget_h`, `fixed_h`, `metrics_interval_s` ([scheduler](scheduler.md)).
+- `GET /projects/{id}` also returns `cost_estimate`: `{day, monthly_net, currency, unpriced, at}` (latest daily estimate, net,
+  see [checks](checks.md#cost-estimate)) or `null` before the first inventory cycle.
 - `PATCH /rules/{id}`: `selector: null` or `""` clears the selector; params are validated per check; unknown fields → 400.
 - `POST /rules`: `project_id` must be a project of the org (omit = all projects of the org); `resource_id` needs `project_id`
   and must belong to it; `hetzner_api` cannot be created (one system rule per project). Deleting a rule deletes its alerts;

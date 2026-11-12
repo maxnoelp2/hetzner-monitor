@@ -134,6 +134,34 @@ pub async fn mock_inventory(server: &MockServer, servers: &[(i64, &str)]) {
             .mount(server)
             .await;
     }
+    mock_pricing(server).await;
+}
+
+/// `GET /pricing`, shaped after the spec; prices made up.
+pub fn pricing_json() -> Value {
+    json!({
+        "currency": "EUR", "vat_rate": "19.00",
+        "volume": { "price_per_gb_month": { "net": "0.0500000000", "gross": "0.0595000000000000" } },
+        "server_backup": { "percentage": "20.00" },
+        "server_types": [
+            { "id": 1, "name": "cx22", "prices": [{ "location": "fsn1",
+                "price_monthly": { "net": "4.0000000000", "gross": "4.7600000000000000" } }] },
+            { "id": 2, "name": "cx42", "prices": [{ "location": "fsn1",
+                "price_monthly": { "net": "16.0000000000", "gross": "19.0400000000000000" } }] }
+        ],
+        "load_balancer_types": [],
+        "primary_ips": [{ "type": "ipv4", "prices": [{ "location": "fsn1",
+            "price_monthly": { "net": "0.5000000000", "gross": "0.5950000000000000" } }] }],
+        "floating_ips": []
+    })
+}
+
+async fn mock_pricing(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/pricing"))
+        .respond_with(ok_json(json!({ "pricing": pricing_json() })))
+        .mount(server)
+        .await;
 }
 
 /// Makes every Hetzner request fail with 401.
@@ -147,11 +175,15 @@ pub async fn mock_unauthorized(server: &MockServer) {
         .await;
 }
 
-/// A server object as Hetzner returns it (only the fields the checks read).
+/// A server object as Hetzner returns it (only the fields the checks read). Backups and
+/// protection are on, so the hygiene checks stay quiet unless a test changes them.
 pub fn server_json(id: i64, name: &str, status: &str) -> Value {
     json!({
         "id": id, "name": name, "status": status, "labels": { "env": "test" },
-        "server_type": { "name": "cx22", "cores": 2 },
+        "location": { "name": "fsn1" },
+        "server_type": { "name": "cx22", "cores": 2, "deprecation": null,
+                         "locations": [{ "name": "fsn1", "deprecation": null }] },
+        "backup_window": "22-02", "protection": { "delete": true, "rebuild": true },
         "outgoing_traffic": 0, "ingoing_traffic": 0, "included_traffic": 20_000_000_000_000_u64
     })
 }
@@ -187,6 +219,56 @@ pub async fn mock_project(server: &MockServer, servers: &[Value], load_balancers
             .mount(server)
             .await;
     }
+    mock_pricing(server).await;
+}
+
+/// Like [`mock_project`], with every kind given as `(collection, items)`, e.g.
+/// `("volumes", [...])`. Collections not given are empty.
+pub async fn mock_kinds(server: &MockServer, kinds: &[(&str, Vec<Value>)]) {
+    server.reset().await;
+    let items = |collection: &str| {
+        kinds
+            .iter()
+            .find(|(c, _)| *c == collection)
+            .map_or_else(|| json!([]), |(_, v)| json!(v))
+    };
+    let servers = items("servers");
+    Mock::given(method("GET"))
+        .and(path("/servers"))
+        .and(query_param("per_page", "1"))
+        .respond_with(ok_json(listing(
+            "servers",
+            &json!(
+                servers
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .take(1)
+                    .collect::<Vec<_>>()
+            ),
+        )))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/servers"))
+        .and(query_param("per_page", "50"))
+        .respond_with(ok_json(listing("servers", &servers)))
+        .mount(server)
+        .await;
+    for collection in [
+        "load_balancers",
+        "volumes",
+        "certificates",
+        "floating_ips",
+        "primary_ips",
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/{collection}")))
+            .respond_with(ok_json(listing(collection, &items(collection))))
+            .mount(server)
+            .await;
+    }
+    mock_pricing(server).await;
 }
 
 /// Makes every Hetzner request fail with `status` (and optional rate-limit reset header).
