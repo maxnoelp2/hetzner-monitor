@@ -168,5 +168,5 @@ None.
   estimate left 8 resources unpriced — a read-only diagnosis (`scripts/diag-pricing.py`) showed they were the primary
   IPv6s: the real `/pricing` lists only `ipv4` under `primary_ips` (primary IPv6 is free), so an unlisted `ipv6` now counts
   as 0 and unpriced labels are logged; (2) past `unavailable_after` dates now read "unavailable for new resources since".
-  Second run: estimate 81.00 EUR net with nothing unpriced. The smoke script also checks the M3b rule only after connect
+  Second run: estimate 81.00 EUR net with nothing unpriced; the owner confirmed it matches the Hetzner Console. The smoke script also checks the M3b rule only after connect
   (default rules are per project) and reads missing keys from `deploy/.env`.
