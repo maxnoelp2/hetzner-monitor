@@ -1,6 +1,6 @@
 # ADR-0011: Store derived daily snapshots for cost and the traffic forecast
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-12
 - Deciders: Max Nölp (owner), Claude (agent, draft)
 
