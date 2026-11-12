@@ -4,9 +4,10 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M3** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
+> Status: **M4** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
-> forecast (M3b) are done. Not yet: notifier and channels (M4).
+> forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
+> notifier, silences and ack are implemented. Not yet: login/sessions (M5), PWA and Web Push (M6).
 > Everything else below is the target design.
 
 ## Bird's-eye view
@@ -59,7 +60,7 @@ crates/
             rate-limit header capture, metric value parsing (strings → f64). No DB, no domain logic.
   core/     [hm-core] Domain: check implementations, rule evaluation, alert state machine, label selectors,
             secret envelope encryption, budget maths. Pure where possible → unit-testable without IO.
-  notify/   [hm-notify] Channel adapters (email, slack, discord, webhook, ntfy, web push) behind one trait.
+  notify/   [hm-notify] Channel adapters (email, slack, discord, webhook, ntfy; web push with M6) behind one `Notifier`.
   server/   [hm-server → bin `hetzner-monitor`] The binary: Axum API, auth (sessions + API keys), scheduler loop, notifier worker,
             sqlx repositories, CLI subcommands (e.g. `keys rotate`), config loading.
 migrations/ sqlx SQL migrations (source of truth for the schema).

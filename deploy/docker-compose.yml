@@ -32,6 +32,15 @@ services:
       HM_MASTER_KEY: ${HM_MASTER_KEY:-}
       HM_MODE: ${HM_MODE:-all}
       HM_LOG: ${HM_LOG:-info}
+      # Notifications (docs/design/configuration.md). Empty = unset: no email channels, no links.
+      HM_BASE_URL: ${HM_BASE_URL:-}
+      HM_SMTP_HOST: ${HM_SMTP_HOST:-}
+      HM_SMTP_PORT: ${HM_SMTP_PORT:-}
+      HM_SMTP_TLS: ${HM_SMTP_TLS:-}
+      HM_SMTP_USER: ${HM_SMTP_USER:-}
+      HM_SMTP_PASSWORD: ${HM_SMTP_PASSWORD:-}
+      HM_SMTP_FROM: ${HM_SMTP_FROM:-}
+      HM_ALLOW_PRIVATE_TARGETS: ${HM_ALLOW_PRIVATE_TARGETS:-}
     ports:
       - "127.0.0.1:${HM_PORT:-8080}:8080"
     depends_on:
