@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 http-body-util = "0.1.5"
 
 aes-gcm = { version = "0.11.1", features = ["zeroize"] }
+argon2 = { version = "0.6.0", features = ["zeroize"] }
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 getrandom = "0.4.3"
@@ -52,6 +53,12 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
+
+# Argon2 at the OWASP memory cost takes seconds unoptimised; keep debug builds and tests fast.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 lto = "thin"

@@ -2,6 +2,7 @@
 
 mod alerts;
 mod api_keys;
+mod auth;
 mod channels;
 mod projects;
 mod rules;
@@ -9,13 +10,17 @@ mod silences;
 
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 
 use crate::error::ApiError;
 use crate::http::AppState;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/me", get(auth::me))
+        .route("/me/password", put(auth::change_password))
         .route("/projects", get(projects::list).post(projects::create))
         .route(
             "/projects/{id}",

@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use hm_core::crypto::MasterKey;
 use hm_server::config::{self, Config, Mode};
 use hm_server::http::{AppState, router};
-use hm_server::{bootstrap, db, notifier, scheduler, telemetry};
+use hm_server::{bootstrap, db, keys, notifier, scheduler, telemetry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -42,6 +42,34 @@ enum Command {
         #[command(subcommand)]
         action: MasterKeyAction,
     },
+    /// Master key rotation (reads `HM_MASTER_KEY(S)(_FILE)` and `HM_DATABASE_URL`).
+    Keys {
+        #[command(subcommand)]
+        action: KeysAction,
+    },
+    /// User administration.
+    Users {
+        #[command(subcommand)]
+        action: UsersAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum KeysAction {
+    /// Show how many stored secrets use each master key version.
+    Status,
+    /// Re-wrap all data keys with the newest configured master key version.
+    Rotate,
+}
+
+#[derive(Subcommand)]
+enum UsersAction {
+    /// Set a new random password (printed once) and end all sessions of the user.
+    ResetPassword {
+        /// The user's e-mail address.
+        #[arg(long)]
+        email: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -60,6 +88,10 @@ async fn main() -> ExitCode {
         Command::MasterKey {
             action: MasterKeyAction::Generate,
         } => generate_master_key(),
+        Command::Keys { action } => run_keys(&action).await,
+        Command::Users {
+            action: UsersAction::ResetPassword { email },
+        } => reset_password(&email).await,
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -83,14 +115,18 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .context("failed to apply migrations")?;
     tracing::info!("migrations applied");
+    keys::check_versions(&pool, &config.keyring)
+        .await
+        .context("master key check failed")?;
 
     let state = AppState {
         db: pool.clone(),
-        master_key: config.master_key.clone(),
+        keyring: config.keyring.clone(),
         hcloud: hm_hcloud::Client::new().context("failed to build the Hetzner client")?,
         notifier: hm_notify::Notifier::new(config.smtp.as_ref(), config.allow_private_targets)
             .context("failed to set up notifications")?,
         base_url: config.base_url.as_deref().map(Arc::from),
+        login_throttle: Arc::default(),
     };
     let listener = TcpListener::bind(config.bind)
         .await
@@ -100,10 +136,13 @@ async fn serve() -> anyhow::Result<()> {
     let worker = matches!(config.mode, Mode::All | Mode::Worker);
     let scheduler = worker.then(|| tokio::spawn(scheduler::run(state.clone(), stop_rx.clone())));
     let notifier = worker.then(|| tokio::spawn(notifier::run(state.clone(), stop_rx)));
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("HTTP server failed")?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("HTTP server failed")?;
 
     let _ = stop_tx.send(true);
     for handle in [scheduler, notifier].into_iter().flatten() {
@@ -115,13 +154,7 @@ async fn serve() -> anyhow::Result<()> {
 }
 
 async fn run_bootstrap(org: &str, email: &str) -> anyhow::Result<()> {
-    let database_url = config::database_url_from_env()?;
-    let pool = db::connect(&database_url)
-        .await
-        .context("failed to connect to the database")?;
-    db::migrate(&pool)
-        .await
-        .context("failed to apply migrations")?;
+    let pool = connect_migrated().await?;
     let done = bootstrap::run(&pool, org, email).await?;
     // Operator-facing output on stdout, shown exactly once. Never logged.
     println!("Bootstrap complete.");
@@ -130,6 +163,75 @@ async fn run_bootstrap(org: &str, email: &str) -> anyhow::Result<()> {
     println!();
     println!("Admin API key — shown only once, store it now (e.g. in your password manager):");
     println!("{}", done.key.full.expose().as_str());
+    println!();
+    println!("Initial password of the owner — shown only once; log in with it and change it:");
+    println!("{}", done.password.expose().as_str());
+    Ok(())
+}
+
+async fn connect_migrated() -> anyhow::Result<sqlx::PgPool> {
+    let database_url = config::database_url_from_env()?;
+    let pool = db::connect(&database_url)
+        .await
+        .context("failed to connect to the database")?;
+    db::migrate(&pool)
+        .await
+        .context("failed to apply migrations")?;
+    Ok(pool)
+}
+
+async fn run_keys(action: &KeysAction) -> anyhow::Result<()> {
+    let keyring = config::keyring_from_env()?;
+    let pool = connect_migrated().await?;
+    if matches!(action, KeysAction::Rotate) {
+        let done = keys::rotate(&pool, &keyring).await?;
+        println!(
+            "Re-wrapped {} project token(s) and {} channel config(s) to master key version {}.",
+            done.projects,
+            done.channels,
+            keyring.current_version()
+        );
+    }
+    let status = keys::status(&pool).await?;
+    println!(
+        "Configured master key versions: {:?} (current: {})",
+        keyring.versions().collect::<Vec<_>>(),
+        keyring.current_version()
+    );
+    if status.rows.is_empty() {
+        println!("No stored secrets.");
+    }
+    for ((table, version), count) in &status.rows {
+        let note = if keyring.contains(*version) {
+            ""
+        } else {
+            "  <- NOT CONFIGURED"
+        };
+        println!("  {table:<22} version {version}: {count} row(s){note}");
+    }
+    let old: Vec<i32> = status
+        .versions()
+        .filter(|v| *v != keyring.current_version())
+        .collect();
+    if old.is_empty() {
+        println!("All secrets use the current version; older keys can be removed from the list.");
+    } else {
+        println!("Versions still in use besides the current one: {old:?} (run `keys rotate`).");
+    }
+    pool.close().await;
+    Ok(())
+}
+
+async fn reset_password(email: &str) -> anyhow::Result<()> {
+    let pool = connect_migrated().await?;
+    let password = bootstrap::reset_password(&pool, email).await?;
+    // Operator-facing output on stdout, shown exactly once. Never logged.
+    println!(
+        "New password for {} — shown only once; all their sessions were ended:",
+        email.trim()
+    );
+    println!("{}", password.expose().as_str());
+    pool.close().await;
     Ok(())
 }
 
