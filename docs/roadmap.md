@@ -16,7 +16,7 @@ link the execution plan in `docs/plans/` that delivered them.
 
 ## Pre-M3 verifications
 
-- [x] CPU metric is per vCPU (100 = one full core) — now stated explicitly in the spec (2026-11-11); additionally checked with real data in the M3a smoke test.
+- [x] CPU metric is per vCPU (100 = one full core) — stated explicitly in the spec (2026-11-11); real data on a 3-vCPU server normalised as expected in the M3a smoke test (2026-11-12).
 - [ ] Traffic billing period — not exposed by the API. Billing FAQ (2026-11-11): only outgoing traffic, invoices per calendar month; the counter reset date is **not** documented → the M3b forecast stays a labelled calendar-month estimate.
 
 ## M3 — in progress
@@ -25,7 +25,7 @@ link the execution plan in `docs/plans/` that delivered them.
   - [x] Metrics tier (adaptive interval, only servers in scope of metric rules), series evaluation without local storage
   - [x] Checks `cpu` (default rule, normalised by vCPUs), `network` and `disk_io` (templates)
   - [x] Custom rules: `POST /rules`, `DELETE /rules/{id}`
-  - [ ] Read-only real check (`scripts/smoke-m3a.sh`)
+  - [x] Read-only real check (`scripts/smoke-m3a.sh`): a temporary low-threshold `cpu` rule fired from real Hetzner data (2026-11-12)
 - M3b (plan to follow): `certificate_expiry`, `deprecation`, hygiene, `cost_change`, traffic forecast
 
 ## M2 — done ([plan](plans/2026-11-11-m2-scheduler-rules-alerts.md))

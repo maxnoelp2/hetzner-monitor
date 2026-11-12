@@ -1,6 +1,6 @@
 # Plan: M3a — metrics tier and metric checks (`cpu`, `network`, `disk_io`)
 
-- Status: In progress — implemented, waiting for the owner's read-only real check
+- Status: Done
 - Milestone: M3 (part a of two; part b = Hetzner-specific, hygiene and cost checks, separate plan and PR)
 - Owner: Claude (agent), reviewed by Max Nölp
 - Started: 2026-11-11
@@ -33,7 +33,7 @@ which have no default threshold).
       system alert); metric alerts are frozen while the project is not `active` (invariant 6). A server without data
       (new, or Hetzner returns no samples) never fires.
 - [x] **End-to-end test** (wiremock, synthetic clock): CPU series at 95 % of 2 cores over 10 min → `firing`; back to 10 % → `resolved`.
-- [ ] **Real read-only check:** against a real project, a temporary custom rule (e.g. `cpu` > 1 % for 120 s on one server)
+- [x] **Real read-only check:** against a real project, a temporary custom rule (e.g. `cpu` > 1 % for 120 s on one server)
       fires from real Hetzner data — no server is touched or stressed. Values plausible vs. the Hetzner Console graph.
 - [x] Pre-M3 verification "CPU per vCPU" closed: the spec now states it explicitly (re-checked 2026-11-11); recorded in checks.md and the roadmap.
 - [x] fmt, clippy `-D warnings`, tests green; docs updated (checks, scheduler, alerting, api, data-model, hcloud-client, research, roadmap).
@@ -68,7 +68,7 @@ counter reset date is not stated → the traffic forecast (M3b) keeps "calendar 
 7. [x] **Rules API**: `POST /rules`, `DELETE /rules/{id}`; docs.
 8. [x] **Tests**: unit (core, hcloud), integration (e2e CPU, no-rule-no-requests, budget interval, failure freeze, custom rules + isolation).
 9. [x] **Docs** (see acceptance criteria) and a short `scripts/smoke-m3a.sh` for the read-only real check.
-10. [ ] **Verify**: criteria, owner's read-only real check, record results, open PR.
+10. [x] **Verify**: criteria, owner's read-only real check, record results, open PR.
 
 ## Dependencies (new crates)
 
@@ -89,6 +89,14 @@ None planned (RFC 3339 formatting via `time`, already used).
 - `step` is a hint: Hetzner may return a coarser step for long windows; the evaluation uses the step from the response.
 - Real acceptance via `stress` is replaced by a read-only check with a low temporary threshold (no production server is loaded).
 
+## Result (2026-11-12)
+
+| Criterion | Result |
+|---|---|
+| Client, series evaluation, checks, custom rules, failure freeze, e2e CPU | ✅ 104 tests (57 core, 9 hcloud + 1 ignored live, 17 scheduler scenarios) |
+| **Real read-only check** (`scripts/smoke-m3a.sh`, owner's real project, 9 servers) | ✅ temporary rule `cpu > 1 % for 120 s` on one server fired in the **first metrics cycle** after it was created (08:20:04 UTC): "CPU 36.4 % of 3 vCPUs for 13 min" — real series parsed, normalised by the snapshot's `cores` (3), duration measured on the series. Default `cpu` rule (90 %) did not fire for any server. Metrics every 60 s, rate limit 3591/3600, no warnings or errors in the app log; rule and project removed afterwards. Comparison with the Console graph: not done by the owner (optional). |
+| fmt / clippy `-D warnings --locked` | ✅ |
+
 ## Progress log
 
 - 2026-11-11 — Plan drafted; M3 split into M3a (this) and M3b. Spec re-checked: CPU per vCPU now stated explicitly;
@@ -102,3 +110,4 @@ None planned (RFC 3339 formatting via `time`, already used).
   vanished server is skipped. (5) Metrics paused by the budget have no system alert yet (doc marks it planned).
   (6) `hm-hcloud` now depends on `time` (already in the workspace) for RFC 3339 query parameters.
   Tests: 57 core, 9 hcloud (+1 ignored live), 17 scheduler scenarios incl. 5 new metric ones; 104 in total.
+- 2026-11-12 — Owner ran the read-only real check on the M3a stack: passed (see Result). Plan done.
