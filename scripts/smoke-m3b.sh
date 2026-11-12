@@ -91,7 +91,7 @@ fi
 project_rules="$(api GET "/rules?project_id=$project_id")"
 if ! grep -q '"cost_change"' <<<"$project_rules"; then
   echo "✗ project has no cost_change rule — is the stack running M3b (migration 0005)?"
-  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+  echo "  rebuild: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --build -d"
   exit 1
 fi
 

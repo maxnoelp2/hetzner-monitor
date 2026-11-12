@@ -45,7 +45,7 @@ api() { # method path [curl args...] — the key goes via a header file, bodies 
 status="$(api GET /channels -o /dev/null -w '%{http_code}')"
 if [[ "$status" != "200" ]]; then
   echo "✗ GET /channels returned HTTP $status — is the stack running M4 and HM_API_KEY valid?"
-  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+  echo "  rebuild: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --build -d"
   exit 1
 fi
 

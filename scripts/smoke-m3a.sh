@@ -29,7 +29,7 @@ json_field() { python3 -I -c 'import json,sys; v=json.loads(sys.argv[1]); [v := 
 preflight="$(api GET "/rules?per_page=1" -o /dev/null -w '%{http_code}')"
 if [[ "$preflight" != "200" ]]; then
   echo "✗ GET /rules returned HTTP $preflight — is the stack running M3a and HM_API_KEY valid?"
-  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+  echo "  rebuild: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --build -d"
   exit 1
 fi
 

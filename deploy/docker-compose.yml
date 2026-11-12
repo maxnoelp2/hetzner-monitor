@@ -1,6 +1,8 @@
-# Local / self-hosted setup: Postgres + hetzner-monitor.
-#   docker compose -f deploy/docker-compose.yml up --build
-# Copy deploy/.env.example to deploy/.env to override defaults. Change the password for anything non-local.
+# Self-hosted setup: Postgres + the released hetzner-monitor image (README, "Self-hosting").
+#   docker compose up -d                      # in a directory with this file and a .env next to it
+# Settings come from .env next to this file (template: deploy/.env.example, reference:
+# docs/design/configuration.md). Set HM_POSTGRES_PASSWORD before the first start.
+# Development (build from source): add -f deploy/docker-compose.build.yml, see CLAUDE.md.
 name: hetzner-monitor
 
 services:
@@ -22,10 +24,8 @@ services:
     restart: unless-stopped
 
   app:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-    image: hetzner-monitor:dev
+    # Pinned release; upgrade by changing HM_VERSION (CHANGELOG.md lists what changed).
+    image: ghcr.io/maxnoelp2/hetzner-monitor:${HM_VERSION:-0.1.0}
     environment:
       HM_DATABASE_URL: postgres://hetzner_monitor:${HM_POSTGRES_PASSWORD:-hetzner_monitor}@postgres:5432/hetzner_monitor
       # Required — the app refuses to start without it. How to generate one: see deploy/.env.example
