@@ -21,7 +21,7 @@ checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota
 **M3b done** (read-only real check passed): inventory checks `certificate_expiry`, `deprecation`,
 `hygiene_backups`/`_protection`/`_orphans`, `cost_change` (`/pricing` × inventory), `traffic_quota` forecast; daily
 derived snapshots (`cost_estimates`, `traffic_samples`, ADR-0011).
-**M4 implemented** (owner's real channel check pending): `hm-notify` (email/SMTP, Slack, Discord, signed webhook, ntfy,
+**M4 done** (real channel check passed with Discord): `hm-notify` (email/SMTP, Slack, Discord, signed webhook, ntfy,
 SSRF guard), durable `notification_jobs` queue filled in the alert transaction and a notifier worker (ADR-0012), routing
 by `min_severity` or pinned rule channels, re-notify, `POST /alerts/{id}/ack`, silences, `/channels` incl. `/test`.
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.

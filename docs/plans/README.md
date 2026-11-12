@@ -20,4 +20,4 @@ refactor). It lets a human or an agent pick up work mid-way without re-deriving 
 | [2026-11-11 — M2 scheduler, rules & alerts](2026-11-11-m2-scheduler-rules-alerts.md) | Done (real power-off test skipped) |
 | [2026-11-11 — M3a metrics tier & metric checks](2026-11-11-m3a-metrics-tier.md) | Done |
 | [2026-11-12 — M3b inventory, hygiene & cost checks](2026-11-12-m3b-inventory-checks.md) | Done |
-| [2026-11-12 — M4 notifications, silences & ack](2026-11-12-m4-notifications.md) | In progress |
+| [2026-11-12 — M4 notifications, silences & ack](2026-11-12-m4-notifications.md) | Done |
