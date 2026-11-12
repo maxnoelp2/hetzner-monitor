@@ -14,6 +14,14 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
+## M4 — implemented (real channel check pending) ([plan](plans/2026-11-12-m4-notifications.md))
+
+- [x] Channels email (SMTP), Slack, Discord, signed webhook, ntfy; configs sealed, write-only; `POST /channels/{id}/test`
+- [x] Durable queue (`notification_jobs`, enqueued in the alert transaction) and notifier with backoff ([ADR-0012](adr/0012-notification-delivery.md))
+- [x] Routing by `min_severity` or pinned rule channels; re-notify (not for `info`); ack; silences
+- [x] SSRF guard (`HM_ALLOW_PRIVATE_TARGETS=false`)
+- [ ] Real check (`scripts/smoke-m4.sh`): every channel type the owner uses verified via `POST /channels/{id}/test`
+
 ## Pre-M3 verifications
 
 - [x] CPU metric is per vCPU (100 = one full core) — stated explicitly in the spec (2026-11-11); real data on a 3-vCPU server normalised as expected in the M3a smoke test (2026-11-12).

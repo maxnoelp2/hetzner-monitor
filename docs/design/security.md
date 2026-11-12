@@ -42,11 +42,18 @@ Role per membership: `owner | admin | member`. Every handler resolves the caller
 
 ## Outbound requests (SSRF)
 
-Webhook/ntfy URLs are user-controlled. In SaaS mode block private, loopback, link-local and metadata
-ranges (incl. `169.254.169.254`) after DNS resolution; configurable for self-hosted (`HM_ALLOW_PRIVATE_TARGETS`).
+Webhook/ntfy URLs are user-controlled. With `HM_ALLOW_PRIVATE_TARGETS=false` (to be the SaaS default) the notifier refuses
+targets in private, loopback, link-local (incl. `169.254.169.254`), CGNAT, unspecified, multicast, reserved and
+unique-local ranges, also IPv4-mapped and NAT64 forms: IP literals are checked directly, host names through a DNS resolver
+that drops such addresses for every connection (so rebinding between check and connect does not help). Redirects are never
+followed and proxies are not used. Self-hosted default: `true` (alerts to a LAN ntfy or webhook are common).
+Implemented in `hm_notify::guard` (M4).
 
 ## Redaction
 
 - Secret types implement neither `Debug` nor `Display` with real content.
 - `tracing` fields for tokens/URLs/keys are redacted. Error messages never embed secrets.
+- Channel configs (`hm_notify::ChannelConfig`), `SmtpSettings` and the notifier print only their type; delivery errors are
+  short fixed strings (`HTTP 404`, `timeout`, …) built without the URL, so `last_error` and the test endpoint never leak
+  a webhook URL, token, secret or recipient. Configs are sealed with AAD = channel id.
 - Reported security issues: see [SECURITY.md](../../SECURITY.md).

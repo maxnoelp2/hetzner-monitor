@@ -1,6 +1,6 @@
 # Design: Rules, alert lifecycle, notifications
 
-Status: rules, state machine, data-source failure **implemented** (M2); notifications, ack, silences, re-notify **proposed** (M4) · Crates: `crates/core` (state machine, selectors), `crates/server` (`engine`), `crates/notify` (channels)
+Status: rules, state machine, data-source failure **implemented** (M2); notifications, ack, silences, re-notify **implemented** (M4, [ADR-0012](../adr/0012-notification-delivery.md)) · Crates: `crates/core` (state machine, selectors), `crates/server` (`engine`), `crates/notify` (channels)
 
 ## Rules
 
@@ -31,15 +31,18 @@ stateDiagram-v2
 - `pending → ok` drops the alert row: it never fired, so there is nothing to notify or keep.
 - A resource that disappears or leaves the rule's scope closes its alert at once (firing → resolved, pending → dropped).
 - Inventory-only rules ([checks](checks.md#inventory-checks-m3b)) are evaluated on inventory cycles only; fast cycles leave their alerts as they are.
-- `info` hygiene alerts stay open while the finding holds. Proposal for M4: no re-notify for `info`.
+- `info` hygiene alerts stay open while the finding holds; `info` alerts never re-notify.
 - `resource_lifecycle` is an event, not a condition: it is stored as an alert that fires and resolves in the same cycle
   (events `fired` + `resolved`), so notifications (M4) treat it like any other alert. The first sync of a project reports nothing.
 - **Notify** on `firing` and `resolved` only (not `pending`).
 - **Dedup:** at most one open alert per (rule, resource) — partial unique index.
 - **Flapping guard:** resolve only after 2 consecutive good cycles.
-- **Re-notify:** a still-firing alert notifies again every `renotify_s` (default 4 h) unless acknowledged.
-- **Acknowledge:** stops re-notify; `resolved` is still sent.
-- **Silences:** time window + scope (project, resource, selector). Evaluation continues; notifications are suppressed and recorded as suppressed.
+- **Re-notify:** a still-firing `warning`/`critical` alert notifies again every `renotify_s` (rule column, default 4 h)
+  since its last notification, unless acknowledged; not during the flapping guard's good cycles. Event `renotified`.
+- **Acknowledge** (`POST /alerts/{id}/ack`): stops re-notify; `resolved` is still sent. Event `acked`.
+- **Silences:** time window + scope (project, resource, rule, label selector; none = the whole org). Evaluation continues;
+  a covered notification is not queued and an event `suppressed` (with `silence_id`) is recorded. A silence ending later
+  recalls nothing and sends nothing retroactively.
 
 ## Data-source failure (invariant 6)
 
@@ -62,7 +65,41 @@ after two successful cycles, like any other alert.
 | ntfy | HTTP `POST` to topic | server URL, topic, optional token |
 | Web Push | VAPID (`web-push`) for the PWA | per-device subscription |
 
-- Routing: each channel has `min_severity`; a rule may pin specific channels.
-- One internal payload schema, rendered per channel. The webhook schema is **versioned** (`"version": 1`) and documented.
-- Durable queue in `notification_jobs` with exponential backoff; restart-safe (invariant 9).
-- Native push (APNs/FCM) arrives with the Tauri mobile app.
+Web Push is planned with the PWA (M6); the other five channels are implemented (M4, crate `hm-notify`).
+
+- **Routing** (decided when the event is written): a rule with pinned channels (`rule_channels`) notifies those (if enabled),
+  otherwise every enabled channel of the org whose `min_severity` (default `warning`) the alert reaches. `resolved` goes
+  only to the channels its `fired`/`renotified` went to. One-shot alerts (`resource_lifecycle`) notify once (`fired`).
+- **Queue** (ADR-0012): `fired`, `resolved` and `renotified` insert `notification_jobs` in the alert's transaction. The
+  notifier (modes `all`/`worker`, every 2 s) claims due jobs with `FOR UPDATE SKIP LOCKED` and sends while holding the
+  lock (10 s timeout). Failures re-queue with backoff 30 s · 2ⁿ⁻¹ (max 1 h; a `429` `Retry-After` is used instead) up to
+  8 attempts; 4xx and other permanent errors fail at once. Delivery is **at-least-once**. Finished jobs are kept 90 days.
+- **Messages:** title `FIRING|RESOLVED|STILL FIRING [severity] <rule>: <resource>`, body = alert message, project and a
+  link (`HM_BASE_URL/api/v1/alerts/{id}` when set). Slack: `{text}` (mrkdwn, escaped). Discord: `{content}` ≤ 2000 chars,
+  mentions disabled. ntfy: JSON publish to the server root with `topic`, `title`, `message`, `priority` (critical 5,
+  warning 4, else 3), `tags`, `click`; optional `Authorization: Bearer`. Email: plain text via SMTP.
+- **Native push** (APNs/FCM) arrives with the Tauri mobile app.
+
+### Webhook payload (version 1)
+
+`POST` with `Content-Type: application/json` and headers `X-HM-Event` (`fired|resolved|renotified|test`),
+`X-HM-Delivery` (job id; the same on retries — deduplicate on it) and `X-HM-Signature: sha256=<hex HMAC-SHA256 of the
+raw body, keyed with the channel secret>`. Verify the signature over the exact bytes received.
+
+```json
+{
+  "version": 1,
+  "event": "fired",
+  "at": "2026-11-12T12:00:00Z",
+  "alert": { "id": "uuid", "state": "firing", "severity": "critical", "check_type": "server_status",
+             "message": "server web-1 (1) is off", "value": null,
+             "fired_at": "2026-11-12T12:00:00Z", "resolved_at": null },
+  "rule": { "id": "uuid", "name": "Server not running" },
+  "project": { "id": "uuid", "name": "prod" },
+  "resource": { "kind": "server", "hetzner_id": 1, "name": "web-1" },
+  "link": "https://hm.example.com/api/v1/alerts/uuid"
+}
+```
+
+`resource` is `null` for project-level alerts (`hetzner_api`) and `link` is `null` without `HM_BASE_URL`. New fields may
+be added within version 1; removing or changing one bumps the version.

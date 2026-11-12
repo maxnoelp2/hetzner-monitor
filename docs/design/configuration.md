@@ -10,10 +10,14 @@ Source: `crates/server/src/config.rs`.
 | `HM_MASTER_KEYS` | no | — | planned | Versioned keys for rotation (proposed format: `1:<b64>,2:<b64>`) |
 | `HM_MODE` | no | `all` | M2 | `all` (API + scheduler) \| `api` (no scheduler) \| `worker` (scheduler; still serves `/healthz`, `/readyz`, API) |
 | `HM_BIND` | no | `0.0.0.0:8080` | M0 | HTTP listen address |
-| `HM_BASE_URL` | no | — | planned | Public URL (links in notifications, cookies) |
-| `HM_SMTP_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_FROM` | for email | — | planned | SMTP settings |
+| `HM_BASE_URL` | no | — | M4 | Public URL, `http(s)://…`; links in notifications (`<base>/api/v1/alerts/{id}`), later cookies |
+| `HM_SMTP_HOST` | for email | — | M4 | SMTP server; unset = email channels unavailable (`422 email_disabled`) |
+| `HM_SMTP_FROM` | with `HM_SMTP_HOST` | — | M4 | Sender address, e.g. `hetzner-monitor <hm@example.com>` |
+| `HM_SMTP_TLS` | no | `starttls` | M4 | `starttls` (required) \| `tls` (implicit) \| `none` (local relays only) |
+| `HM_SMTP_PORT` | no | 587 / 465 / 25 | M4 | Default by `HM_SMTP_TLS` |
+| `HM_SMTP_USER` / `HM_SMTP_PASSWORD` | no (both or neither) | — | M4 | SMTP login; the password is never logged |
 | `HM_VAPID_PUBLIC_KEY` / `HM_VAPID_PRIVATE_KEY` | for web push | — | planned | Web Push keys |
-| `HM_ALLOW_PRIVATE_TARGETS` | no | `true` self-hosted | planned | Allow webhooks to private IP ranges |
+| `HM_ALLOW_PRIVATE_TARGETS` | no | `true` | M4 | `false` refuses Slack/Discord/webhook/ntfy targets that resolve to private, loopback, link-local, CGNAT or metadata addresses ([security](security.md#outbound-requests-ssrf)) |
 | `HM_LOG` | no | `info` | M0 | `tracing` filter (`RUST_LOG` syntax) |
 
 The first organisation, owner and admin API key are created with the CLI, not env vars:

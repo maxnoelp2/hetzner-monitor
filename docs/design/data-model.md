@@ -1,6 +1,6 @@
 # Design: Data model (PostgreSQL)
 
-Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples **implemented** (`migrations/0001`–`0005`); the rest **proposed**.
+Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples, channels, rule channels, notification jobs, silences **implemented** (`migrations/0001`–`0006`); sessions, push subscriptions **proposed**.
 Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
@@ -59,16 +59,17 @@ alerts(
 alert_events(id bigserial pk, alert_id fk, type text /* pending|fired|resolved|acked|renotified|suppressed */,
              at, data jsonb)
 
-silences(id uuid pk, org_id fk, project_id fk null, resource_id fk null, selector text null,
-         starts_at, ends_at, reason text, created_by fk)
+silences(id uuid pk, org_id fk, project_id fk null, resource_id fk null, rule_id fk null, selector text null,
+         starts_at, ends_at /* > starts_at */, reason text, created_by fk null, created_at)
 
 -- notifications
-notification_channels(id uuid pk, org_id fk, type text, name text,
-                      config_ct bytea 🔒, config_dek_ct bytea 🔒, key_version int,
-                      min_severity text, enabled bool)
+notification_channels(id uuid pk, org_id fk, type text /* email|slack|discord|webhook|ntfy */, name text /* unique per org, case-insensitive */,
+                      config_ct bytea 🔒, config_dek_ct bytea 🔒, key_version int, hint text /* non-secret */,
+                      min_severity text default 'warning', enabled bool, created_at, updated_at)
 rule_channels(rule_id fk, channel_id fk, pk(rule_id, channel_id))
-notification_jobs(id bigserial pk, alert_event_id fk, channel_id fk,
-                  status text /* queued|sent|failed */, attempts int, next_attempt_at, last_error text)
+notification_jobs(id bigserial pk, alert_event_id fk, channel_id fk, unique(alert_event_id, channel_id),
+                  status text /* queued|sent|failed */, attempts int, next_attempt_at, last_error text /* redacted */,
+                  created_at, finished_at)   -- finished jobs kept 90 days
 push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text, created_at)
 ```
 
@@ -78,7 +79,7 @@ push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text
 - **Bootstrap (self-hosted):** `hetzner-monitor bootstrap --org … --email …` creates the first org, an `owner` and an `admin` API key (printed once). No password until login lands (M5).
 - **Resources** have no `org_id`; they are tenant-scoped through `hetzner_projects.org_id` (every query joins it).
 - API keys are revoked by setting `revoked_at` (kept for audit), not deleted.
-- **Retention (proposed):** `alert_events` and finished `notification_jobs` 90 days; daily cleanup task.
+- **Retention:** finished `notification_jobs` 90 days (hourly cleanup in the notifier); `alert_events` retention is still proposed.
 - **No metric tables** (invariant 8). `cost_estimates` and `traffic_samples` hold derived daily readings Hetzner does not keep
   ([ADR-0011](../adr/0011-derived-daily-snapshots.md)); they are tenant-scoped through their project (`traffic_samples` via `resources`).
 - Enum-like `text` columns get `CHECK` constraints in migrations.
