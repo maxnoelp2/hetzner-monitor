@@ -1,10 +1,10 @@
 # Plan: M5a — login, server-side sessions, master-key rotation
 
-- Status: In progress (implemented, PR open; owner real check pending)
+- Status: Done
 - Milestone: M5 (part a of two)
 - Owner: agent (Claude Code), reviewed by Max Nölp
 - Started: 2026-11-12
-- PR: —
+- PR: https://github.com/maxnoelp2/hetzner-monitor/pull/12
 
 ## Split of M5
 
@@ -58,7 +58,7 @@ without touching the secrets themselves or calling Hetzner.
 - [x] Docs: `security.md` (sessions, CSRF, rate limit, rotation runbook → accepted), `api.md`, `configuration.md`,
       `data-model.md`, `ARCHITECTURE.md` status, `CLAUDE.md` status/commands, ADR-0013, roadmap.
 - [x] fmt + clippy clean, all tests green; `scripts/smoke-m5a.sh` for the owner's real check (local stack only).
-- [ ] Owner's real check on the local stack (`scripts/smoke-m5a.sh`, `keys status`).
+- [x] Owner's real check on the local stack (`scripts/smoke-m5a.sh`, `keys status`) — passed 2026-11-12.
 
 ## Context
 
@@ -141,3 +141,7 @@ Read and verified on 2026-11-12:
   - Argon2 and blake2 are built with `opt-level = 3` in the dev profile, otherwise tests spend seconds per hash.
   - Smoke script verified against a throwaway instance (port 18080, own database): login, `/me`, CSRF refusal and
     acceptance, logout; `keys status`/`keys rotate` CLI output checked. The owner's stack was not touched.
+- 2026-11-12 — Real check on the owner's local stack (M5a image, migration 0007 applied, startup key check passed):
+  `users reset-password`, then `scripts/smoke-m5a.sh` all green — login as owner, cookie `HttpOnly; SameSite=Lax; Secure`
+  (no `HM_BASE_URL` set → `Secure`), `/me`, 403 `csrf_failed` without and 201 with `X-CSRF-Token`, logout ends the
+  session. `keys status`: version 1 only, no stored secrets at that time (rotation itself covered by the integration test).
