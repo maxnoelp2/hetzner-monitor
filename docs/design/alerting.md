@@ -30,6 +30,8 @@ stateDiagram-v2
   Metric checks measure the duration on Hetzner's series instead of the alert's local pending time, so an alert can open directly as `firing` when the series already covers `for_s`.
 - `pending → ok` drops the alert row: it never fired, so there is nothing to notify or keep.
 - A resource that disappears or leaves the rule's scope closes its alert at once (firing → resolved, pending → dropped).
+- Inventory-only rules ([checks](checks.md#inventory-checks-m3b)) are evaluated on inventory cycles only; fast cycles leave their alerts as they are.
+- `info` hygiene alerts stay open while the finding holds. Proposal for M4: no re-notify for `info`.
 - `resource_lifecycle` is an event, not a condition: it is stored as an alert that fires and resolves in the same cycle
   (events `fired` + `resolved`), so notifications (M4) treat it like any other alert. The first sync of a project reports nothing.
 - **Notify** on `firing` and `resolved` only (not `pending`).

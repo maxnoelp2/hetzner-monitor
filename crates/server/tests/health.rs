@@ -80,11 +80,13 @@ async fn migrations_create_all_tables(pool: PgPool) {
             "alert_events",
             "alerts",
             "api_keys",
+            "cost_estimates",
             "hetzner_projects",
             "memberships",
             "organizations",
             "resources",
             "rules",
+            "traffic_samples",
             "users"
         ]
     );

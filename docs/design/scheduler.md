@@ -1,6 +1,6 @@
 # Design: Scheduler & rate-limit budget
 
-Status: fast and inventory tiers, budget maths, error handling and leases **implemented** (M2); metrics tier **implemented** (M3a), load balancer metrics **proposed** · [ADR-0010](../adr/0010-polling-tiers-and-budget.md) · Crates: `crates/server` (`scheduler`, `cycle`), `crates/core` (`budget`)
+Status: fast and inventory tiers, budget maths, error handling and leases **implemented** (M2); metrics tier **implemented** (M3a); `/pricing` and daily snapshots on the inventory tier **implemented** (M3b); load balancer metrics **proposed** · [ADR-0010](../adr/0010-polling-tiers-and-budget.md) · Crates: `crates/server` (`scheduler`, `cycle`), `crates/core` (`budget`)
 
 ## Problem
 
@@ -14,7 +14,7 @@ everything else the user runs (Terraform, CI, CLI). Metrics cost **one request p
 |---|---|---|---|
 | **fast** | `GET /servers` (status, `locked`, traffic, labels), `GET /load_balancers` (target health; skipped while the project has none) | ⌈N/50⌉ + ⌈L/50⌉ | fixed 60 s (+ 0–5 s jitter) |
 | **metrics** | `GET /servers/{id}/metrics?type=…` per server **in scope of an enabled metric rule**, only the families those rules need (LB metrics: later) | N_metrics | **adaptive**, ≥ 60 s (+ 0–5 s jitter) |
-| **inventory** | all six resource kinds (M2); server types and pricing follow with the checks that need them | ~6–10 | 15 min |
+| **inventory** | all six resource kinds + `GET /pricing` (M3b) | Σ ⌈n_kind/50⌉ + 1 (≥ 7) | 15 min |
 
 Status changes are detected within ~1 minute regardless of project size; only utilisation alerts slow down for large projects.
 
@@ -30,7 +30,12 @@ Example, 100 servers: fast = 2 × 60 = 120/h, inventory ≈ 40/h → 1640/h left
 
 If `budget_h − fixed_h ≤ 0`, metrics are paused for the project (`metrics_interval_s` = `null`); a system alert explaining it is **planned**.
 
-An empty list still costs one request, so every inventory listing counts at least 1.
+An empty list still costs one request, so every inventory listing counts at least 1; `/pricing` adds one per inventory cycle.
+
+**Inventory cycles** also store the derived daily snapshots ([ADR-0011](../adr/0011-derived-daily-snapshots.md)) in the cycle's
+transaction — today's cost estimate (`cost_estimates`, upserted) and the day's first traffic counter per server / load
+balancer (`traffic_samples`) — and then evaluate the inventory-only checks ([checks](checks.md#inventory-checks-m3b)).
+Fast cycles skip those rules.
 `N_metrics` counts only servers covered by an enabled metric rule (`cpu`, `network`, `disk_io`); with none, the metrics
 tier does not run at all and `next_metrics_at` is `null`. Disabling the default `cpu` rule therefore stops all metric requests.
 `GET /projects/{id}` shows `budget_h`, `fixed_h`, `metrics_interval_s` (`null` = no metric rule in scope, or paused),

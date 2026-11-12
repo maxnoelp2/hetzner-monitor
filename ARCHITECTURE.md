@@ -4,8 +4,9 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M3a** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
-> leases), rule engine, alert lifecycle and metric checks are implemented. Not yet: inventory checks (M3b), notifier and channels (M4).
+> Status: **M3** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
+> leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
+> forecast (M3b) are implemented. Not yet: notifier and channels (M4).
 > Everything else below is the target design.
 
 ## Bird's-eye view
@@ -83,7 +84,8 @@ These must always hold. Breaking one needs an ADR.
 5. **Tenant isolation.** Every tenant row hangs off an `organizations` row; every query is scoped by `org_id`.
 6. **Data-source failure ≠ resource failure.** If a project's API access is degraded, availability checks for its resources are suspended and one system alert is raised instead.
 7. **At most one open alert per (rule, resource)**, enforced by a partial unique index.
-8. **No own time-series storage.** Metric windows are fetched from Hetzner (30-day retention) when rules are evaluated.
+8. **No own metric time-series storage.** Metric windows are fetched from Hetzner (30-day retention) when rules are evaluated.
+   Derived daily readings Hetzner does not keep (cost estimate, traffic counter) are allowed: one row per day, bounded retention ([ADR-0011](docs/adr/0011-derived-daily-snapshots.md)).
 9. **Notifications are durable.** They are queued in Postgres before sending; a restart loses nothing.
 
 ## Cross-cutting concerns

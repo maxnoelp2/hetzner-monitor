@@ -51,12 +51,14 @@ Each LB target carries `health_status` per service.
 | Server | `locked` | running action |
 | Server | `outgoing_traffic`, `ingoing_traffic`, `included_traffic` (bytes, current billing period) | traffic quota |
 | Server | `backup_window` (null = backups off), `protection`, `labels` | hygiene, scoping |
-| Server type | `deprecation` (**deprecated field**) → use `locations[].deprecation.unavailable_after` | deprecation alert |
+| Server type | `deprecation` (**deprecated field**) → use `locations[].deprecation.unavailable_after` matched by `server.location.name` (embedded in every server object; locations themselves carry no deprecation, 2026-11-12) | deprecation alert |
+| Load balancer type | `load_balancer_type.deprecation`, `prices[]` (embedded) | deprecation, cost |
 | Load balancer | traffic fields, `targets[].health_status` | quota, health |
-| Certificate | `not_valid_after`, `status.issuance`, `status.renewal` (`failed` …), `status.error` | expiry / renewal |
-| Volume | `status` (available, creating), `server` | orphans |
-| Floating/Primary IP | assignment | orphans, cost |
-| `/pricing` | prices incl. `vat_rate`, `currency` | cost estimate |
+| Certificate | `type` uploaded/managed, `not_valid_after` (nullable), `status` (null for uploaded): `issuance` pending/completed/failed, `renewal` scheduled/pending/failed/unavailable, `error` | expiry / renewal |
+| Volume | `status` (available, creating), `server` (nullable), `size` (GB), `protection.delete` | orphans, cost |
+| Floating IP | `type`, `server` (nullable), `home_location.name`, `protection.delete` | orphans, cost |
+| Primary IP | `type`, `assignee_id` (nullable), `assignee_type`, `location.name`, `protection.delete` | orphans, cost |
+| `/pricing` (not paginated) | `currency`, `vat_rate`, `server_types[]`/`load_balancer_types[]`.`prices[]` per location, `volume.price_per_gb_month`, `primary_ips[]`/`floating_ips[]` per type + location, `server_backup.percentage`; prices are decimal strings `{net, gross}` (verified 2026-11-12) | cost estimate |
 
 Project-wide action listing (`GET /actions` without IDs) was **removed on 2025-01-30** → detect changes by inventory diff.
 

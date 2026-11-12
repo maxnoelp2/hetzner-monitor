@@ -1,6 +1,6 @@
 # Design: Data model (PostgreSQL)
 
-Status: tenancy, API keys, projects, resources, rules, alerts, alert events **implemented** (`migrations/0001`–`0004`); the rest **proposed**.
+Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples **implemented** (`migrations/0001`–`0005`); the rest **proposed**.
 Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
@@ -34,10 +34,17 @@ resources(
   first_seen_at, last_seen_at, deleted_at,
   unique(project_id, kind, hetzner_id))
 
+-- derived daily snapshots (ADR-0011), written by inventory cycles
+cost_estimates(project_id fk, day date /* UTC */, monthly_net double precision, currency text, unpriced int, at,
+               pk(project_id, day))                  -- latest estimate of the day; 90 days kept
+traffic_samples(resource_id fk, day date /* UTC */, at, outgoing_traffic bigint,
+                pk(resource_id, day))                -- first counter of the day (servers, LBs); 40 days kept
+
 -- alerting
 rules(
   id uuid pk, org_id fk, project_id fk null /* null = all projects of the org */,
-  name text, check_type text /* server_status|resource_lifecycle|lb_target_health|traffic_quota|hetzner_api|cpu|network|disk_io */,
+  name text, check_type text /* server_status|resource_lifecycle|lb_target_health|traffic_quota|hetzner_api|cpu|network|disk_io|
+                                  certificate_expiry|deprecation|hygiene_backups|hygiene_protection|hygiene_orphans|cost_change */,
   params jsonb, selector text null, resource_id fk null,
   severity text /* info|warning|critical */, enabled bool, is_default bool,
   renotify_s int default 14400, created_at, updated_at)
@@ -72,5 +79,6 @@ push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text
 - **Resources** have no `org_id`; they are tenant-scoped through `hetzner_projects.org_id` (every query joins it).
 - API keys are revoked by setting `revoked_at` (kept for audit), not deleted.
 - **Retention (proposed):** `alert_events` and finished `notification_jobs` 90 days; daily cleanup task.
-- **No metric tables** (invariant 8).
+- **No metric tables** (invariant 8). `cost_estimates` and `traffic_samples` hold derived daily readings Hetzner does not keep
+  ([ADR-0011](../adr/0011-derived-daily-snapshots.md)); they are tenant-scoped through their project (`traffic_samples` via `resources`).
 - Enum-like `text` columns get `CHECK` constraints in migrations.
