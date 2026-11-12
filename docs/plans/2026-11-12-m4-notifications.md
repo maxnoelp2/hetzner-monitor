@@ -1,10 +1,10 @@
 # Plan: M4 notification channels, notifier queue, silences, ack
 
-- Status: In progress
+- Status: Done
 - Milestone: M4
 - Owner: Claude (agent), reviewed by Max Nölp
 - Started: 2026-11-12
-- PR: <link once opened>
+- PR: [#11](https://github.com/maxnoelp2/hetzner-monitor/pull/11)
 
 ## Goal
 
@@ -46,7 +46,7 @@ time window. Every channel can be verified with `POST /channels/{id}/test`.
       integration tests (wiremock for HTTP channels, lettre stub transport for email, synthetic clock): fire → job →
       delivered; resolved follows; retry after 500 and 429; silence suppresses; ack stops re-notify; restart-safety
       (job left queued is sent by a new worker); tenant isolation of channels and silences.
-- [ ] **Real check** (`scripts/smoke-m4.sh`): the owner creates each channel type they want to verify from env vars
+- [x] **Real check** (`scripts/smoke-m4.sh`): the owner creates each channel type they want to verify from env vars
       (never typed into the chat), runs `POST /channels/{id}/test` for each, confirms arrival; channels are deleted again.
       No Hetzner write access; no production server is touched.
 - [x] fmt, clippy `--locked -D warnings`, tests green; docs updated (alerting, data-model, api, configuration,
@@ -99,7 +99,7 @@ Read and verified on 2026-11-12:
        `GET /alerts/{id}` events show suppression; scope checks (`write` for changes).
 8. [x] **Tests** — unit + integration as in the criteria; existing scheduler tests stay green.
 9. [x] **Docs + `scripts/smoke-m4.sh`** (macOS Python 3.9, secrets from env / `deploy/.env` only, channels deleted on exit).
-10. [ ] **Verify** — criteria, PR, owner's real channel check, record the result.
+10. [x] **Verify** — criteria, PR, owner's real channel check, record the result.
 
 ## Dependencies (new crates)
 
@@ -143,3 +143,7 @@ Read and verified on 2026-11-12:
   Tests: 14 `hm-notify` unit tests (rendering, signature, SSRF ranges, retry classification, stub email), core delivery
   timing, config parsing; 10 integration scenarios in `tests/notifications.rs`; all existing suites green. `smoke-m4.sh`
   verified end to end against a throwaway local instance with a local webhook receiver.
+- 2026-11-12 — Real check by the owner: stack rebuilt from this branch (migration 0006 applied), `scripts/smoke-m4.sh`
+  with a Discord webhook from `deploy/.env` → `POST /channels/{id}/test` ok, message arrived in the Discord channel;
+  the temporary channel was deleted again. The owner verified Discord only; email, Slack, webhook and ntfy are covered
+  by the integration tests (and the webhook by the local end-to-end run). Hetzner was not touched.

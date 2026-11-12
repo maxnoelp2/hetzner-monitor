@@ -7,7 +7,7 @@ invariants must hold. Details live in [docs/design/](docs/README.md#design); the
 > Status: **M4** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
 > forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
-> notifier, silences and ack are implemented. Not yet: login/sessions (M5), PWA and Web Push (M6).
+> notifier, silences and ack are done. Not yet: login/sessions (M5), PWA and Web Push (M6).
 > Everything else below is the target design.
 
 ## Bird's-eye view
