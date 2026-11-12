@@ -17,7 +17,7 @@ no agent on the servers, no Prometheus stack.
 **M2 done** (real power-off test skipped by owner decision, covered by integration tests) — on top of M1 (bootstrap, API keys, encrypted tokens,
 `hm-hcloud`, connect + inventory): scheduler with fast/inventory tiers, budget and leases, rule engine, alert lifecycle,
 checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, system alert `hetzner_api`, rules/alerts API.
-**M3a in progress:** metrics tier, checks `cpu`/`network`/`disk_io`, custom rules (`POST`/`DELETE /rules`).
+**M3a done** (read-only real check passed): metrics tier, checks `cpu`/`network`/`disk_io`, custom rules (`POST`/`DELETE /rules`).
 No notifications yet (M4). After M3a: **M3b** (Hetzner-specific, hygiene and cost checks).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
