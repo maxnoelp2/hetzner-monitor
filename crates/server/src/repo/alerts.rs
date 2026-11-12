@@ -295,18 +295,22 @@ pub async fn close_for_rule(
 }
 
 /// An alert as shown in the API.
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct AlertView {
     pub id: Uuid,
     pub project_id: Uuid,
     pub rule_id: Uuid,
     pub rule_name: String,
+    #[schema(value_type = crate::openapi::enums::CheckType)]
     pub check_type: String,
     pub resource_id: Option<Uuid>,
+    #[schema(value_type = Option<crate::openapi::enums::ResourceKind>)]
     pub resource_kind: Option<String>,
     pub resource_name: Option<String>,
     pub hetzner_id: Option<i64>,
+    #[schema(value_type = crate::openapi::enums::AlertState)]
     pub state: String,
+    #[schema(value_type = crate::openapi::enums::Severity)]
     pub severity: String,
     pub value: Option<f64>,
     pub message: String,
@@ -395,14 +399,16 @@ pub async fn get(db: &PgPool, org: OrgId, id: Uuid) -> Result<Option<AlertView>,
 }
 
 /// An alert event as shown in the API.
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct EventView {
     pub id: i64,
     #[sqlx(rename = "type")]
     #[serde(rename = "type")]
+    #[schema(value_type = crate::openapi::enums::AlertEventType)]
     pub kind: String,
     #[serde(with = "time::serde::rfc3339")]
     pub at: OffsetDateTime,
+    #[schema(value_type = Object)]
     pub data: Json<Value>,
 }
 

@@ -7,10 +7,11 @@ use uuid::Uuid;
 use super::OrgId;
 
 /// Project as shown in the API. Contains no secret material.
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct ProjectView {
     pub id: Uuid,
     pub name: String,
+    #[schema(value_type = crate::openapi::enums::ProjectStatus)]
     pub status: String,
     pub status_message: Option<String>,
     pub token_hint: String,

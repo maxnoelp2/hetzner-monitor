@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::{OrgId, UserId};
 
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct SilenceView {
     pub id: Uuid,
     pub project_id: Option<Uuid>,

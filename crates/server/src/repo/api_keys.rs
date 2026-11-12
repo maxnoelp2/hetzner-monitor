@@ -17,11 +17,13 @@ pub struct KeyForAuth {
 }
 
 /// Key metadata shown in the API (never the key or its hash).
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct ApiKeyView {
     pub id: Uuid,
     pub name: String,
+    /// First characters of the key, to recognise it.
     pub prefix: String,
+    #[schema(value_type = Vec<crate::openapi::enums::Scope>)]
     pub scopes: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,

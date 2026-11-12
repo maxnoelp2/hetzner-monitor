@@ -11,14 +11,16 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use hm_core::{password, session};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::bad_json;
 use crate::auth::{Credential, Principal, Scope};
 use crate::error::ApiError;
 use crate::http::AppState;
+use crate::openapi::ErrorBody;
+use crate::openapi::enums::{AuthKind, Role};
 use crate::repo::{self, OrgId, UserId};
 
 /// Longest e-mail address accepted at login (RFC 5321 path limit).
@@ -42,10 +44,11 @@ impl<S: Send + Sync> FromRequestParts<S> for PeerAddr {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Login {
     email: String,
+    #[schema(format = Password)]
     password: String,
     /// Log into this org instead of the user's oldest membership.
     org_id: Option<Uuid>,
@@ -73,26 +76,60 @@ fn session_cookie(state: &AppState, value: &str, max_age_s: i64) -> HeaderValue 
     HeaderValue::from_str(&cookie).expect("cookie is ASCII")
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct UserRef {
+    id: Uuid,
+    email: String,
+    name: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct OrgRef {
+    id: Uuid,
+    name: String,
+}
+
+/// The authenticated user, their organisation and role.
+#[derive(Serialize, ToSchema)]
+pub struct Profile {
+    user: UserRef,
+    org: OrgRef,
+    #[schema(value_type = Role)]
+    role: String,
+    #[schema(value_type = AuthKind)]
+    auth: &'static str,
+    /// Send as `X-CSRF-Token` with cookie-authenticated requests other than GET/HEAD/OPTIONS;
+    /// `null` for API keys.
+    csrf_token: Option<String>,
+}
+
 async fn profile(
     state: &AppState,
     org: OrgId,
     user: UserId,
     credential: &Credential,
-) -> Result<Value, ApiError> {
+) -> Result<Profile, ApiError> {
     let me = repo::users::me(&state.db, org, user)
         .await?
         .ok_or_else(ApiError::unauthorized)?;
     let (auth, csrf) = match credential {
         Credential::ApiKey(_) => ("api_key", None),
-        Credential::Session { csrf, .. } => ("session", Some(csrf.expose().as_str())),
+        Credential::Session { csrf, .. } => ("session", Some(csrf.expose().as_str().to_owned())),
     };
-    Ok(json!({
-        "user": { "id": me.user_id, "email": me.email, "name": me.name },
-        "org": { "id": me.org_id, "name": me.org_name },
-        "role": me.role,
-        "auth": auth,
-        "csrf_token": csrf,
-    }))
+    Ok(Profile {
+        user: UserRef {
+            id: me.user_id,
+            email: me.email,
+            name: me.name,
+        },
+        org: OrgRef {
+            id: me.org_id,
+            name: me.org_name,
+        },
+        role: me.role,
+        auth,
+        csrf_token: csrf,
+    })
 }
 
 /// Runs Argon2 off the async runtime.
@@ -109,6 +146,19 @@ async fn verify_password(password: String, stored: Option<String>) -> Result<boo
     .map_err(|e| ApiError::internal(&e))
 }
 
+/// Log in with e-mail and password.
+///
+/// Sets the `hm_session` cookie (HttpOnly, SameSite=Lax, Secure unless `HM_BASE_URL` is `http://`) and returns the
+/// CSRF token. Wrong e-mail, wrong password and disabled users get the same `invalid_credentials`.
+#[utoipa::path(post, path = "/auth/login", operation_id = "login", tag = "auth",
+    request_body = Login,
+    responses(
+        (status = OK, body = Profile, headers(("Set-Cookie" = String, description = "`hm_session=…`"))),
+        (status = BAD_REQUEST, description = "Invalid body (`bad_request`)", body = ErrorBody),
+        (status = UNAUTHORIZED, description = "Wrong credentials (`invalid_credentials`)", body = ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many failed logins (`too_many_attempts`)", body = ErrorBody,
+            headers(("Retry-After" = u64, description = "Seconds until the next attempt"))),
+    ))]
 pub async fn login(
     State(state): State<AppState>,
     PeerAddr(peer): PeerAddr,
@@ -178,6 +228,10 @@ pub async fn login(
     Ok(response)
 }
 
+/// End the session and clear the cookie (with an API key: only clears the cookie). Scope: any.
+#[utoipa::path(post, path = "/auth/logout", operation_id = "logout", tag = "auth",
+    responses((status = NO_CONTENT, description = "Logged out",
+        headers(("Set-Cookie" = String, description = "Expired `hm_session` cookie")))))]
 pub async fn logout(
     State(state): State<AppState>,
     principal: Principal,
@@ -192,25 +246,41 @@ pub async fn logout(
     Ok(response)
 }
 
+/// The current user, organisation, role and (for sessions) the CSRF token. Scope: `read`.
+#[utoipa::path(get, path = "/me", operation_id = "me", tag = "auth",
+    responses((status = OK, body = Profile)))]
 pub async fn me(
     State(state): State<AppState>,
     principal: Principal,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<Profile>, ApiError> {
     principal.require(Scope::Read)?;
     Ok(Json(
         profile(&state, principal.org, principal.user, &principal.credential).await?,
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChangePassword {
+    /// Required unless the user has no password yet.
+    #[schema(format = Password)]
     current_password: Option<String>,
+    /// 12–1024 characters.
+    #[schema(format = Password, min_length = 12, max_length = 1024)]
     new_password: String,
 }
 
-/// Changes the caller's password and ends the user's other sessions. A user without a password
-/// (bootstrapped before M5) can set one only with an `admin` API key.
+/// Change the caller's password; ends the user's other sessions. Scope: `read`.
+///
+/// A user without a password (bootstrapped before M5) can set one only with an `admin` API key.
+#[utoipa::path(put, path = "/me/password", operation_id = "changePassword", tag = "auth",
+    request_body = ChangePassword,
+    responses(
+        (status = NO_CONTENT, description = "Password changed"),
+        (status = BAD_REQUEST, description = "Invalid body or password length (`bad_request`)", body = ErrorBody),
+        (status = FORBIDDEN, description = "`current_password` is wrong (`wrong_password`), missing scope \
+            (`forbidden`) or CSRF token (`csrf_failed`)", body = ErrorBody),
+    ))]
 pub async fn change_password(
     State(state): State<AppState>,
     principal: Principal,

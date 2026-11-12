@@ -5,12 +5,14 @@ use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use hm_core::crypto::Keyring;
-use serde_json::{Value, json};
+use serde::Serialize;
 use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 /// How long `/readyz` waits for the database before reporting unavailable.
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
@@ -29,30 +31,85 @@ pub struct AppState {
     pub login_throttle: Arc<crate::throttle::LoginThrottle>,
 }
 
+/// All routes with their OpenAPI description. Routes are registered **only** here and in
+/// [`crate::api::routes`], always through `routes!`, so none can be missing from the document
+/// (`tests/openapi.rs` fails on plain Axum routing here).
+fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::with_openapi(<crate::openapi::ApiDoc as utoipa::OpenApi>::openapi())
+        .routes(routes!(healthz))
+        .routes(routes!(readyz))
+        .routes(routes!(openapi_json))
+        .nest("/api/v1", crate::api::routes())
+}
+
+/// The OpenAPI 3.1 document of this server (also printed by `hetzner-monitor openapi`).
+pub fn openapi() -> utoipa::openapi::OpenApi {
+    let (_, mut doc) = routes().split_for_parts();
+    crate::openapi::finish(&mut doc);
+    doc
+}
+
 /// Builds the application router.
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .nest("/api/v1", crate::api::routes())
+    let (router, mut doc) = routes().split_for_parts();
+    crate::openapi::finish(&mut doc);
+    let doc = Arc::new(doc);
+    router
+        .layer(Extension(doc))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
+/// `{"status": …}` of the health endpoints.
+#[derive(Serialize, ToSchema)]
+pub struct Health {
+    /// `ok` or `unavailable`.
+    status: &'static str,
+    /// Why the service is not ready (`database`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+}
+
 /// Liveness: the process is up and serving requests. Never touches the database.
-async fn healthz() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+#[utoipa::path(get, path = "/healthz", operation_id = "healthz", tag = "system",
+    responses((status = OK, description = "The process is up", body = Health)))]
+async fn healthz() -> Json<Health> {
+    Json(Health {
+        status: "ok",
+        reason: None,
+    })
+}
+
+/// The OpenAPI 3.1 document of this API.
+#[utoipa::path(get, path = "/api/v1/openapi.json", operation_id = "openapi", tag = "system",
+    responses((status = OK, description = "OpenAPI 3.1 document", content_type = "application/json",
+        body = Object)))]
+async fn openapi_json(
+    Extension(doc): Extension<Arc<utoipa::openapi::OpenApi>>,
+) -> Json<Arc<utoipa::openapi::OpenApi>> {
+    Json(doc)
 }
 
 /// Readiness: the service can reach its database.
-async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
+#[utoipa::path(get, path = "/readyz", operation_id = "readyz", tag = "system",
+    responses(
+        (status = OK, description = "The database is reachable", body = Health),
+        (status = SERVICE_UNAVAILABLE, description = "The database is not reachable", body = Health),
+    ))]
+async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Health>) {
     let check = tokio::time::timeout(
         READINESS_TIMEOUT,
         sqlx::query("SELECT 1").execute(&state.db),
     )
     .await;
     match check {
-        Ok(Ok(_)) => (StatusCode::OK, Json(json!({ "status": "ok" }))),
+        Ok(Ok(_)) => (
+            StatusCode::OK,
+            Json(Health {
+                status: "ok",
+                reason: None,
+            }),
+        ),
         Ok(Err(error)) => {
             tracing::warn!(%error, "readiness check failed: database error");
             unavailable()
@@ -67,9 +124,12 @@ async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
     }
 }
 
-fn unavailable() -> (StatusCode, Json<Value>) {
+fn unavailable() -> (StatusCode, Json<Health>) {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        Json(json!({ "status": "unavailable", "reason": "database" })),
+        Json(Health {
+            status: "unavailable",
+            reason: Some("database"),
+        }),
     )
 }

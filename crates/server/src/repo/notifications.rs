@@ -257,12 +257,13 @@ pub async fn cleanup(db: &sqlx::PgPool, now: OffsetDateTime) -> Result<u64, sqlx
 }
 
 /// A job as shown on `GET /alerts/{id}`.
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct JobView {
     pub id: i64,
     pub alert_event_id: i64,
     pub channel_id: Uuid,
     pub channel_name: String,
+    #[schema(value_type = crate::openapi::enums::JobStatus)]
     pub status: String,
     pub attempts: i32,
     pub last_error: Option<String>,

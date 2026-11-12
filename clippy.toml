@@ -1,0 +1,2 @@
+# Handler doc comments become OpenAPI summaries/descriptions, so they name these terms without backticks.
+doc-valid-idents = ["OpenAPI", "HttpOnly", "SameSite", ".."]

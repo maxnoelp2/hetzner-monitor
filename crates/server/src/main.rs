@@ -47,6 +47,8 @@ enum Command {
         #[command(subcommand)]
         action: KeysAction,
     },
+    /// Print the OpenAPI 3.1 document (JSON) to stdout; needs no database or keys.
+    Openapi,
     /// User administration.
     Users {
         #[command(subcommand)]
@@ -89,6 +91,7 @@ async fn main() -> ExitCode {
             action: MasterKeyAction::Generate,
         } => generate_master_key(),
         Command::Keys { action } => run_keys(&action).await,
+        Command::Openapi => print_openapi(),
         Command::Users {
             action: UsersAction::ResetPassword { email },
         } => reset_password(&email).await,
@@ -241,6 +244,12 @@ fn generate_master_key() -> anyhow::Result<()> {
     eprintln!(
         "Store this as HM_MASTER_KEY (or in a file for HM_MASTER_KEY_FILE). Losing it makes stored tokens unrecoverable."
     );
+    Ok(())
+}
+
+fn print_openapi() -> anyhow::Result<()> {
+    let json = hm_server::http::openapi().to_pretty_json()?;
+    println!("{json}");
     Ok(())
 }
 

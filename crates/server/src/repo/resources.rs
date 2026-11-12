@@ -7,12 +7,15 @@ use uuid::Uuid;
 
 use super::OrgId;
 
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct ResourceView {
     pub id: Uuid,
+    #[schema(value_type = crate::openapi::enums::ResourceKind)]
     pub kind: String,
     pub hetzner_id: i64,
     pub name: String,
+    /// Hetzner labels.
+    #[schema(value_type = std::collections::HashMap<String, String>)]
     pub labels: Json<Value>,
     #[serde(with = "time::serde::rfc3339")]
     pub first_seen_at: OffsetDateTime,
@@ -49,7 +52,7 @@ pub struct Applied {
 }
 
 /// Counts for one kind after applying a sync.
-#[derive(Debug, Default, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, PartialEq, Eq, utoipa::ToSchema)]
 pub struct KindCounts {
     pub seen: u64,
     pub new: u64,

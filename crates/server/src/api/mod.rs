@@ -8,46 +8,36 @@ mod projects;
 mod rules;
 mod silences;
 
-use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection};
-use axum::routing::{delete, get, post, put};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 use crate::error::ApiError;
 use crate::http::AppState;
 
-pub fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/auth/login", post(auth::login))
-        .route("/auth/logout", post(auth::logout))
-        .route("/me", get(auth::me))
-        .route("/me/password", put(auth::change_password))
-        .route("/projects", get(projects::list).post(projects::create))
-        .route(
-            "/projects/{id}",
-            get(projects::get).delete(projects::remove),
-        )
-        .route("/projects/{id}/sync", post(projects::sync))
-        .route("/projects/{id}/resources", get(projects::resources))
-        .route("/rules", get(rules::list).post(rules::create))
-        .route(
-            "/rules/{id}",
-            get(rules::get).patch(rules::update).delete(rules::remove),
-        )
-        .route("/alerts", get(alerts::list))
-        .route("/alerts/{id}", get(alerts::get))
-        .route("/alerts/{id}/ack", post(alerts::ack))
-        .route("/channels", get(channels::list).post(channels::create))
-        .route(
-            "/channels/{id}",
-            get(channels::get)
-                .patch(channels::update)
-                .delete(channels::remove),
-        )
-        .route("/channels/{id}/test", post(channels::test))
-        .route("/silences", get(silences::list).post(silences::create))
-        .route("/silences/{id}", delete(silences::remove))
-        .route("/api-keys", get(api_keys::list).post(api_keys::create))
-        .route("/api-keys/{id}", delete(api_keys::revoke))
+/// `/api/v1` routes. Register routes only with `routes!` so they appear in the OpenAPI document.
+pub fn routes() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(auth::login))
+        .routes(routes!(auth::logout))
+        .routes(routes!(auth::me))
+        .routes(routes!(auth::change_password))
+        .routes(routes!(projects::list, projects::create))
+        .routes(routes!(projects::get, projects::remove))
+        .routes(routes!(projects::sync))
+        .routes(routes!(projects::resources))
+        .routes(routes!(rules::list, rules::create))
+        .routes(routes!(rules::get, rules::update, rules::remove))
+        .routes(routes!(alerts::list))
+        .routes(routes!(alerts::get))
+        .routes(routes!(alerts::ack))
+        .routes(routes!(channels::list, channels::create))
+        .routes(routes!(channels::get, channels::update, channels::remove))
+        .routes(routes!(channels::test))
+        .routes(routes!(silences::list, silences::create))
+        .routes(routes!(silences::remove))
+        .routes(routes!(api_keys::list, api_keys::create))
+        .routes(routes!(api_keys::revoke))
 }
 
 /// Maps a JSON body rejection to our error shape.

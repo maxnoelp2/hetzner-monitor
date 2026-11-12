@@ -9,14 +9,16 @@ use uuid::Uuid;
 use super::OrgId;
 
 /// A channel as shown in the API. No secret material.
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct ChannelView {
     pub id: Uuid,
     #[serde(rename = "type")]
+    #[schema(value_type = crate::openapi::enums::ChannelType)]
     pub kind: String,
     pub name: String,
     /// Non-secret description: target host or recipient count.
     pub hint: String,
+    #[schema(value_type = crate::openapi::enums::Severity)]
     pub min_severity: String,
     pub enabled: bool,
     #[serde(with = "time::serde::rfc3339")]

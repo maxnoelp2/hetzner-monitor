@@ -18,7 +18,7 @@ pub const COST_RETENTION_DAYS: i64 = 90;
 pub const TRAFFIC_RETENTION_DAYS: i64 = 40;
 
 /// The latest cost estimate of a project, as shown in the API.
-#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct CostView {
     /// UTC day, `YYYY-MM-DD`.
     pub day: String,
