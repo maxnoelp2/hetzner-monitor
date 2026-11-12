@@ -1,3 +1,18 @@
-//! Notification channel adapters (email, Slack, Discord, webhook, ntfy, Web Push) behind one trait.
+//! Notification channel adapters: email (SMTP), Slack, Discord, signed webhook and ntfy,
+//! behind one [`Notifier`]. Web Push follows with the PWA (M6).
 //!
-//! See `docs/design/alerting.md`. Implementation arrives in M4.
+//! See `docs/design/alerting.md#notifications`. This crate depends on nothing internal: the
+//! server builds a [`Payload`] and decrypts the [`ChannelConfig`]; this crate renders and sends.
+
+pub mod config;
+pub mod guard;
+pub mod payload;
+pub mod render;
+pub mod send;
+
+pub use config::{ChannelConfig, ConfigError};
+pub use payload::{AlertInfo, Event, Named, PAYLOAD_VERSION, Payload, ResourceInfo, Severity};
+pub use send::{Notifier, SendError, SetupError, SmtpSettings, SmtpTls};
+
+/// In-memory mail transport for tests ([`Notifier::with_stub_mail`]).
+pub use lettre::transport::stub::AsyncStubTransport as StubMail;

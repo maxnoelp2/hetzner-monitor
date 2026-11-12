@@ -83,9 +83,13 @@ async fn migrations_create_all_tables(pool: PgPool) {
             "cost_estimates",
             "hetzner_projects",
             "memberships",
+            "notification_channels",
+            "notification_jobs",
             "organizations",
             "resources",
+            "rule_channels",
             "rules",
+            "silences",
             "traffic_samples",
             "users"
         ]

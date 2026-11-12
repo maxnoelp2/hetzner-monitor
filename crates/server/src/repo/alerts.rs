@@ -7,7 +7,7 @@ use sqlx::{PgConnection, PgPool};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::OrgId;
+use super::{OrgId, UserId, notifications};
 
 /// An alert that is not resolved yet, as the rule engine needs it.
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -18,6 +18,9 @@ pub struct OpenAlert {
     pub state: String,
     pub pending_since: OffsetDateTime,
     pub ok_cycles: i32,
+    pub fired_at: Option<OffsetDateTime>,
+    pub last_notified_at: Option<OffsetDateTime>,
+    pub acked_at: Option<OffsetDateTime>,
 }
 
 /// Open alerts of a project of this org.
@@ -27,7 +30,8 @@ pub async fn open_for_project(
     project_id: Uuid,
 ) -> Result<Vec<OpenAlert>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT a.id, a.rule_id, a.resource_id, a.state, a.pending_since, a.ok_cycles
+        "SELECT a.id, a.rule_id, a.resource_id, a.state, a.pending_since, a.ok_cycles, a.fired_at,
+                a.last_notified_at, a.acked_at
          FROM alerts a JOIN hetzner_projects p ON p.id = a.project_id
          WHERE p.org_id = $1 AND a.project_id = $2 AND a.state <> 'resolved'",
     )
@@ -77,8 +81,12 @@ pub async fn insert(
     .await?;
     let data = json!({ "message": alert.message, "value": alert.value });
     let first = if fired { "fired" } else { "pending" };
-    event(conn, id, first, now, &data).await?;
+    let first_id = event(conn, id, first, now, &data).await?;
+    if fired {
+        notifications::enqueue(conn, first_id, id, "fired", now).await?;
+    }
     if resolved {
+        // One-shot alert (fired and resolved in one cycle): notified once, by `fired`.
         event(conn, id, "resolved", now, &data).await?;
     }
     Ok(id)
@@ -126,14 +134,16 @@ pub async fn fire(
     .bind(now)
     .execute(&mut *conn)
     .await?;
-    event(
+    let event_id = event(
         conn,
         id,
         "fired",
         now,
         &json!({ "message": message, "value": value }),
     )
-    .await
+    .await?;
+    notifications::enqueue(conn, event_id, id, "fired", now).await?;
+    Ok(())
 }
 
 /// `firing → resolved`.
@@ -154,14 +164,36 @@ pub async fn resolve(
     .bind(now)
     .execute(&mut *conn)
     .await?;
-    event(
+    let event_id = event(
         conn,
         id,
         "resolved",
         now,
         &json!({ "message": message, "value": value }),
     )
-    .await
+    .await?;
+    notifications::enqueue(conn, event_id, id, "resolved", now).await?;
+    Ok(())
+}
+
+/// A still-firing alert notifies again (re-notify, ADR-0012).
+pub async fn renotify(
+    conn: &mut PgConnection,
+    id: Uuid,
+    value: Option<f64>,
+    message: &str,
+    now: OffsetDateTime,
+) -> Result<(), sqlx::Error> {
+    let event_id = event(
+        conn,
+        id,
+        "renotified",
+        now,
+        &json!({ "message": message, "value": value }),
+    )
+    .await?;
+    notifications::enqueue(conn, event_id, id, "renotified", now).await?;
+    Ok(())
 }
 
 /// `pending → ok`: drops an alert that never fired (nothing was or will be notified).
@@ -179,15 +211,60 @@ async fn event(
     kind: &str,
     at: OffsetDateTime,
     data: &Value,
-) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO alert_events (alert_id, type, at, data) VALUES ($1, $2, $3, $4)")
-        .bind(alert_id)
-        .bind(kind)
-        .bind(at)
-        .bind(Json(data))
-        .execute(&mut *conn)
-        .await?;
-    Ok(())
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "INSERT INTO alert_events (alert_id, type, at, data) VALUES ($1, $2, $3, $4) RETURNING id",
+    )
+    .bind(alert_id)
+    .bind(kind)
+    .bind(at)
+    .bind(Json(data))
+    .fetch_one(&mut *conn)
+    .await
+}
+
+/// Outcome of [`ack`].
+pub enum Acked {
+    /// Acknowledged now or earlier (idempotent).
+    Ok,
+    NotFound,
+    /// Resolved alerts cannot be acknowledged.
+    Resolved,
+}
+
+/// Acknowledges an open alert of this org: stops re-notify; `resolved` is still sent.
+pub async fn ack(
+    conn: &mut PgConnection,
+    org: OrgId,
+    id: Uuid,
+    user: UserId,
+    now: OffsetDateTime,
+) -> Result<Acked, sqlx::Error> {
+    let row: Option<(String, Option<OffsetDateTime>)> = sqlx::query_as(
+        "SELECT a.state, a.acked_at FROM alerts a JOIN hetzner_projects p ON p.id = a.project_id
+         WHERE p.org_id = $1 AND a.id = $2 FOR UPDATE OF a",
+    )
+    .bind(org.0)
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    match row {
+        None => Ok(Acked::NotFound),
+        Some((state, _)) if state == "resolved" => Ok(Acked::Resolved),
+        Some((_, Some(_))) => Ok(Acked::Ok),
+        Some((_, None)) => {
+            sqlx::query(
+                "UPDATE alerts SET acked_at = $2, acked_by = $3, updated_at = $2 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(now)
+            .bind(user.0)
+            .execute(&mut *conn)
+            .await?;
+            event(conn, id, "acked", now, &json!({ "by": user.0 })).await?;
+            Ok(Acked::Ok)
+        }
+    }
 }
 
 /// Closes the open alerts of a rule of this org (used when a rule is disabled):
@@ -239,6 +316,11 @@ pub struct AlertView {
     pub fired_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub resolved_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub acked_at: Option<OffsetDateTime>,
+    pub acked_by: Option<Uuid>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_notified_at: Option<OffsetDateTime>,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
@@ -247,7 +329,8 @@ macro_rules! view_select {
     () => {
         "SELECT a.id, a.project_id, a.rule_id, r.name AS rule_name, r.check_type, a.resource_id,
                 res.kind AS resource_kind, res.name AS resource_name, res.hetzner_id, a.state, a.severity,
-                a.value, a.message, a.pending_since, a.fired_at, a.resolved_at, a.updated_at
+                a.value, a.message, a.pending_since, a.fired_at, a.resolved_at, a.acked_at, a.acked_by,
+                a.last_notified_at, a.updated_at
          FROM alerts a
          JOIN hetzner_projects p ON p.id = a.project_id
          JOIN rules r ON r.id = a.rule_id

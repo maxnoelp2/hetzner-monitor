@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use hm_core::alert::{self, Open, Transition};
 use hm_core::checks::{self, CheckType, Context, Outcome};
+use hm_core::delivery;
 use hm_core::selector::Selector;
 use sqlx::PgConnection;
 use time::OffsetDateTime;
@@ -486,6 +487,19 @@ async fn apply(
                 now,
             )
             .await?;
+            // Only while the condition still holds, not during the flapping guard's good cycles.
+            let last = prev.last_notified_at.or(prev.fired_at);
+            if ok_cycles == 0
+                && delivery::renotify_due(
+                    &rule.severity,
+                    prev.acked_at.is_some(),
+                    last.map(OffsetDateTime::unix_timestamp),
+                    i64::from(rule.renotify_s),
+                    now.unix_timestamp(),
+                )
+            {
+                repo::alerts::renotify(conn, prev.id, outcome.value, &outcome.message, now).await?;
+            }
         }
         (Transition::Fire, Some(prev)) => {
             repo::alerts::fire(conn, prev.id, outcome.value, &outcome.message, now).await?;
