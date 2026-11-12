@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use hm_core::crypto::MasterKey;
 use hm_core::secret::Secret;
+use hm_notify::{SmtpSettings, SmtpTls};
 
 /// Default listen address for the HTTP API.
 pub const DEFAULT_BIND: &str = "0.0.0.0:8080";
@@ -56,6 +57,12 @@ pub struct Config {
     pub bind: SocketAddr,
     pub log: String,
     pub mode: Mode,
+    /// SMTP for email channels (`HM_SMTP_*`); `None` = email channels unavailable.
+    pub smtp: Option<SmtpSettings>,
+    /// Public URL for links in notifications (`HM_BASE_URL`), without a trailing slash.
+    pub base_url: Option<String>,
+    /// Whether webhook-style targets may resolve to private addresses (`HM_ALLOW_PRIVATE_TARGETS`).
+    pub allow_private_targets: bool,
 }
 
 impl Config {
@@ -87,7 +94,92 @@ impl Config {
             bind: bind_from_lookup(&lookup)?,
             log: lookup("HM_LOG").unwrap_or_else(|| DEFAULT_LOG.to_owned()),
             mode,
+            smtp: smtp_from_lookup(&lookup)?,
+            base_url: base_url_from_lookup(&lookup)?,
+            allow_private_targets: bool_from_lookup(&lookup, "HM_ALLOW_PRIVATE_TARGETS", true)?,
         })
+    }
+}
+
+fn non_empty(lookup: &impl Fn(&str) -> Option<String>, var: &str) -> Option<String> {
+    lookup(var)
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+}
+
+fn smtp_from_lookup(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<SmtpSettings>, ConfigError> {
+    let Some(host) = non_empty(lookup, "HM_SMTP_HOST") else {
+        return Ok(None);
+    };
+    let from = non_empty(lookup, "HM_SMTP_FROM").ok_or(ConfigError::Missing("HM_SMTP_FROM"))?;
+    let port = non_empty(lookup, "HM_SMTP_PORT")
+        .map(|raw| {
+            raw.parse::<u16>().map_err(|_| ConfigError::Invalid {
+                var: "HM_SMTP_PORT",
+                reason: format!("`{raw}` is not a port number"),
+            })
+        })
+        .transpose()?;
+    let tls = match non_empty(lookup, "HM_SMTP_TLS").as_deref() {
+        None | Some("starttls") => SmtpTls::Starttls,
+        Some("tls") => SmtpTls::Tls,
+        Some("none") => SmtpTls::None,
+        Some(other) => {
+            return Err(ConfigError::Invalid {
+                var: "HM_SMTP_TLS",
+                reason: format!("expected `starttls`, `tls` or `none`, got `{other}`"),
+            });
+        }
+    };
+    let user = non_empty(lookup, "HM_SMTP_USER");
+    // Not trimmed: a password may contain spaces.
+    let password = lookup("HM_SMTP_PASSWORD").filter(|v| !v.is_empty());
+    if user.is_some() != password.is_some() {
+        return Err(ConfigError::Invalid {
+            var: "HM_SMTP_USER",
+            reason: "set both HM_SMTP_USER and HM_SMTP_PASSWORD, or neither".to_owned(),
+        });
+    }
+    Ok(Some(SmtpSettings {
+        host,
+        port,
+        tls,
+        user,
+        password,
+        from,
+    }))
+}
+
+fn base_url_from_lookup(
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<Option<String>, ConfigError> {
+    let Some(raw) = non_empty(lookup, "HM_BASE_URL") else {
+        return Ok(None);
+    };
+    if !(raw.starts_with("http://") || raw.starts_with("https://")) {
+        return Err(ConfigError::Invalid {
+            var: "HM_BASE_URL",
+            reason: format!("`{raw}` must start with http:// or https://"),
+        });
+    }
+    Ok(Some(raw.trim_end_matches('/').to_owned()))
+}
+
+fn bool_from_lookup(
+    lookup: &impl Fn(&str) -> Option<String>,
+    var: &'static str,
+    default: bool,
+) -> Result<bool, ConfigError> {
+    match non_empty(lookup, var).as_deref() {
+        None => Ok(default),
+        Some("true" | "1" | "yes") => Ok(true),
+        Some("false" | "0" | "no") => Ok(false),
+        Some(other) => Err(ConfigError::Invalid {
+            var,
+            reason: format!("expected `true` or `false`, got `{other}`"),
+        }),
     }
 }
 
@@ -153,7 +245,7 @@ mod tests {
 
     use std::path::Path;
 
-    use super::{Config, ConfigError, Mode};
+    use super::{Config, ConfigError, Mode, SmtpTls};
 
     const KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
 
@@ -240,6 +332,63 @@ mod tests {
         assert_eq!(config.log, "info");
         assert_eq!(config.mode, Mode::All);
         assert_eq!(config.database_url.expose(), "postgres://db/app");
+    }
+
+    #[test]
+    fn notification_settings() {
+        let config = load(&[("HM_DATABASE_URL", "x")]).unwrap();
+        assert!(config.smtp.is_none() && config.base_url.is_none() && config.allow_private_targets);
+
+        let config = load(&[
+            ("HM_DATABASE_URL", "x"),
+            ("HM_SMTP_HOST", "smtp.example.com"),
+            ("HM_SMTP_FROM", "hm@example.com"),
+            ("HM_SMTP_USER", "hm"),
+            ("HM_SMTP_PASSWORD", "pw with space"),
+            ("HM_SMTP_TLS", "tls"),
+            ("HM_BASE_URL", "https://hm.example.com/"),
+            ("HM_ALLOW_PRIVATE_TARGETS", "false"),
+        ])
+        .unwrap();
+        let smtp = config.smtp.unwrap();
+        assert_eq!(smtp.tls, SmtpTls::Tls);
+        assert_eq!(smtp.password.as_deref(), Some("pw with space"));
+        assert!(!format!("{smtp:?}").contains("pw with space"));
+        assert_eq!(config.base_url.as_deref(), Some("https://hm.example.com"));
+        assert!(!config.allow_private_targets);
+
+        for (vars, var) in [
+            (vec![("HM_SMTP_HOST", "h")], "HM_SMTP_FROM"),
+            (
+                vec![
+                    ("HM_SMTP_HOST", "h"),
+                    ("HM_SMTP_FROM", "a@b.c"),
+                    ("HM_SMTP_USER", "u"),
+                ],
+                "HM_SMTP_USER",
+            ),
+            (
+                vec![
+                    ("HM_SMTP_HOST", "h"),
+                    ("HM_SMTP_FROM", "a@b.c"),
+                    ("HM_SMTP_TLS", "ssl"),
+                ],
+                "HM_SMTP_TLS",
+            ),
+            (vec![("HM_BASE_URL", "hm.example.com")], "HM_BASE_URL"),
+            (
+                vec![("HM_ALLOW_PRIVATE_TARGETS", "maybe")],
+                "HM_ALLOW_PRIVATE_TARGETS",
+            ),
+        ] {
+            let mut all = vec![("HM_DATABASE_URL", "x")];
+            all.extend(vars);
+            let err = load(&all).unwrap_err();
+            let got = match err {
+                ConfigError::Missing(v) | ConfigError::Invalid { var: v, .. } => v,
+            };
+            assert_eq!(got, var);
+        }
     }
 
     #[test]

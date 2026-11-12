@@ -24,11 +24,21 @@ pub const TEST_MASTER_KEY: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 pub const TOKEN: &str = "fake-hcloud-token-ABCD";
 
 pub fn state(db: PgPool, hcloud_base: &str) -> AppState {
-    AppState {
+    state_with_mail(db, hcloud_base).0
+}
+
+/// Like [`state`], plus the in-memory mail transport email channels send to. Private targets
+/// are allowed (wiremock listens on 127.0.0.1); links use `https://hm.test`.
+pub fn state_with_mail(db: PgPool, hcloud_base: &str) -> (AppState, hm_notify::StubMail) {
+    let (notifier, mail) = hm_notify::Notifier::with_stub_mail("hm@hm.test", true).unwrap();
+    let state = AppState {
         db,
         master_key: Arc::new(MasterKey::from_base64(TEST_MASTER_KEY).unwrap()),
         hcloud: hm_hcloud::Client::with_base_url(hcloud_base).unwrap(),
-    }
+        notifier,
+        base_url: Some(Arc::from("https://hm.test")),
+    };
+    (state, mail)
 }
 
 /// An org with one owner and an API key of the given scope. Returns (org id, full key).

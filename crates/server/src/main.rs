@@ -2,6 +2,7 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -9,7 +10,7 @@ use clap::{Parser, Subcommand};
 use hm_core::crypto::MasterKey;
 use hm_server::config::{self, Config, Mode};
 use hm_server::http::{AppState, router};
-use hm_server::{bootstrap, db, scheduler, telemetry};
+use hm_server::{bootstrap, db, notifier, scheduler, telemetry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -87,21 +88,25 @@ async fn serve() -> anyhow::Result<()> {
         db: pool.clone(),
         master_key: config.master_key.clone(),
         hcloud: hm_hcloud::Client::new().context("failed to build the Hetzner client")?,
+        notifier: hm_notify::Notifier::new(config.smtp.as_ref(), config.allow_private_targets)
+            .context("failed to set up notifications")?,
+        base_url: config.base_url.as_deref().map(Arc::from),
     };
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    let scheduler = matches!(config.mode, Mode::All | Mode::Worker)
-        .then(|| tokio::spawn(scheduler::run(state.clone(), stop_rx)));
+    let worker = matches!(config.mode, Mode::All | Mode::Worker);
+    let scheduler = worker.then(|| tokio::spawn(scheduler::run(state.clone(), stop_rx.clone())));
+    let notifier = worker.then(|| tokio::spawn(notifier::run(state.clone(), stop_rx)));
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("HTTP server failed")?;
 
     let _ = stop_tx.send(true);
-    if let Some(handle) = scheduler {
+    for handle in [scheduler, notifier].into_iter().flatten() {
         let _ = handle.await;
     }
     pool.close().await;

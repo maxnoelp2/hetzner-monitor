@@ -21,6 +21,10 @@ pub struct AppState {
     pub db: PgPool,
     pub master_key: Arc<MasterKey>,
     pub hcloud: hm_hcloud::Client,
+    /// Sends notifications (channel tests from the API, queued jobs from the notifier).
+    pub notifier: hm_notify::Notifier,
+    /// `HM_BASE_URL` without trailing slash, for links in notifications.
+    pub base_url: Option<Arc<str>>,
 }
 
 /// Builds the application router.
