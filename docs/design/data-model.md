@@ -1,6 +1,6 @@
 # Design: Data model (PostgreSQL)
 
-Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples, channels, rule channels, notification jobs, silences **implemented** (`migrations/0001`–`0006`); sessions, push subscriptions **proposed**.
+Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples, channels, rule channels, notification jobs, silences, sessions **implemented** (`migrations/0001`–`0007`); push subscriptions **proposed**.
 Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
@@ -12,7 +12,8 @@ users(id uuid pk, email citext unique, name text, password_hash text /* argon2id
 memberships(org_id fk, user_id fk, role text /* owner|admin|member */, pk(org_id, user_id))
 api_keys(id uuid pk, org_id fk, user_id fk, name text, prefix text unique /* 12 [a-z0-9] */, key_hash bytea /* sha256 */,
          scopes text[], last_used_at, expires_at, revoked_at, created_at)
-sessions(id uuid pk, user_id fk, token_hash text, user_agent text, created_at, expires_at)
+sessions(id uuid pk, user_id fk, org_id, fk(org_id, user_id) → memberships, token_hash bytea unique /* sha256 */,
+         user_agent text, created_at, last_seen_at, expires_at)   -- CSRF token derived, not stored (ADR-0013)
 
 -- hetzner
 hetzner_projects(
@@ -76,10 +77,11 @@ push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text
 ## Notes
 
 - **Tenancy:** every tenant table reaches `organizations` via `org_id` or a parent FK. Repositories take an `OrgId` argument — never query tenant data without it.
-- **Bootstrap (self-hosted):** `hetzner-monitor bootstrap --org … --email …` creates the first org, an `owner` and an `admin` API key (printed once). No password until login lands (M5).
+- **Bootstrap (self-hosted):** `hetzner-monitor bootstrap --org … --email …` creates the first org, an `owner` with a generated initial password and an `admin` API key (both printed once).
+  `hetzner-monitor users reset-password --email …` prints a new password and ends the user's sessions.
 - **Resources** have no `org_id`; they are tenant-scoped through `hetzner_projects.org_id` (every query joins it).
 - API keys are revoked by setting `revoked_at` (kept for audit), not deleted.
-- **Retention:** finished `notification_jobs` 90 days (hourly cleanup in the notifier); `alert_events` retention is still proposed.
+- **Retention:** finished `notification_jobs` 90 days (hourly cleanup in the notifier); expired `sessions` are purged on login; `alert_events` retention is still proposed.
 - **No metric tables** (invariant 8). `cost_estimates` and `traffic_samples` hold derived daily readings Hetzner does not keep
   ([ADR-0011](../adr/0011-derived-daily-snapshots.md)); they are tenant-scoped through their project (`traffic_samples` via `resources`).
 - Enum-like `text` columns get `CHECK` constraints in migrations.
