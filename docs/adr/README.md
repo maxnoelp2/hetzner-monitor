@@ -25,3 +25,4 @@ Short documents that record *why* a significant decision was made. Format: [temp
 | [0010](0010-polling-tiers-and-budget.md) | Three polling tiers with an adaptive rate-limit budget | Accepted |
 | [0011](0011-derived-daily-snapshots.md) | Derived daily snapshots for cost and the traffic forecast | Accepted |
 | [0012](0012-notification-delivery.md) | Deliver notifications at-least-once from a Postgres queue | Accepted |
+| [0013](0013-sessions-csrf-and-key-rotation.md) | Session cookie details, derived CSRF token, login throttling and master-key rotation | Proposed |

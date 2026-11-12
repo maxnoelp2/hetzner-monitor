@@ -4,10 +4,11 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M4** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
+> Status: **M5a** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
 > forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
-> notifier, silences and ack are done. Not yet: login/sessions (M5), PWA and Web Push (M6).
+> notifier, silences and ack are done; M5a: password login, server-side sessions with CSRF, versioned master keys and
+> `keys rotate` are done. Not yet: OpenAPI and release (M5b), PWA and Web Push (M6).
 > Everything else below is the target design.
 
 ## Bird's-eye view
@@ -81,6 +82,7 @@ These must always hold. Breaking one needs an ADR.
 1. **Read-only towards Hetzner.** The `hcloud` crate implements only `GET`.
 2. **All Hetzner traffic is budgeted.** Every request is accounted against the project's rate-limit budget (default 50 % of `RateLimit-Limit`).
 3. **No plaintext secrets at rest.** Tokens and channel configs are envelope-encrypted with AES-256-GCM; AAD binds ciphertext to its row.
+   Passwords are Argon2id hashes; API keys and session tokens are stored as SHA-256 only.
 4. **Secrets never leave the process** via logs, errors, API responses or metrics.
 5. **Tenant isolation.** Every tenant row hangs off an `organizations` row; every query is scoped by `org_id`.
 6. **Data-source failure ≠ resource failure.** If a project's API access is degraded, availability checks for its resources are suspended and one system alert is raised instead.

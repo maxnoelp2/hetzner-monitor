@@ -24,6 +24,9 @@ derived snapshots (`cost_estimates`, `traffic_samples`, ADR-0011).
 **M4 done** (real channel check passed with Discord): `hm-notify` (email/SMTP, Slack, Discord, signed webhook, ntfy,
 SSRF guard), durable `notification_jobs` queue filled in the alert transaction and a notifier worker (ADR-0012), routing
 by `min_severity` or pinned rule channels, re-notify, `POST /alerts/{id}/ack`, silences, `/channels` incl. `/test`.
+**M5a** (login, sessions, rotation): `POST /auth/login` → `hm_session` cookie (SHA-256 stored, CSRF header derived from
+the token), `/me`, `PUT /me/password`, login throttling, Argon2id; `HM_MASTER_KEYS` + `keys status|rotate`, startup key check
+(ADR-0013). M5b (OpenAPI, README self-hosting, release) is next.
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -58,6 +61,9 @@ scripts/smoke-m2.sh                                        # watch alerts while 
 scripts/smoke-m3a.sh                                       # read-only: temporary low-threshold cpu rule fires from real metrics
 scripts/smoke-m3b.sh                                       # read-only: sync, list inventory/hygiene/cost alerts and the cost estimate
 scripts/smoke-m4.sh                                        # create channels from HM_TEST_* env, send a test to each, delete them
+scripts/smoke-m5a.sh                                       # login (HM_EMAIL, HM_PASSWORD from env) → /me → CSRF check → logout
+docker compose -f deploy/docker-compose.yml run --rm app users reset-password --email <email>  # prints a new password once
+docker compose -f deploy/docker-compose.yml run --rm app keys status   # or `keys rotate` (runbook: docs/design/security.md)
 python3 -I scripts/diag-pricing.py                         # read-only: why the cost estimate leaves resources unpriced (no names/IPs)
 ```
 
@@ -66,6 +72,7 @@ python3 -I scripts/diag-pricing.py                         # read-only: why the 
 - Host ports are configurable via `HM_POSTGRES_PORT` / `HM_PORT` (see `deploy/.env.example`).
 - sqlx 0.9 rejects dynamically built SQL strings: write queries as literals (use `concat!` with a macro for shared column lists).
 - Tests use `tests/common/mod.rs`: `state()` / `state_with_mail()` (stub SMTP transport) with a fixed test master key and a wiremock Hetzner, `org_with_key()`, `call()`,
+  `user_with_password()` / `login()` / `call_session()` / `call_raw()` for cookie sessions,
   `mock_project()` / `mock_kinds()` (all six kinds + `/pricing`) / `mock_failure()` / `mock_series()`. Drive poll cycles with `hm_server::scheduler::tick(&state, now)` and deliveries with `hm_server::notifier::run_once(&state, now)` on a synthetic clock.
 
 ## How to work here

@@ -1,12 +1,14 @@
 # Design: HTTP API
 
-Status: endpoints marked ✅ are **implemented** (M1–M4); the rest **proposed** · Crate: `crates/server`
+Status: endpoints marked ✅ are **implemented** (M1–M5a); the rest **proposed** · Crate: `crates/server`
 
 REST under `/api/v1`, JSON. The OpenAPI document is **generated from code** (`utoipa`) and served at
 `/api/v1/openapi.json`; the PWA's TypeScript client is generated from it.
 
 ```
-POST   /auth/login · POST /auth/logout · GET /me
+✅ POST /auth/login {email, password, org_id?} → {user, org, role, auth, csrf_token} + Set-Cookie hm_session · ✅ POST /auth/logout → 204
+✅ GET /me → {user: {id, email, name}, org: {id, name}, role, auth: session|api_key, csrf_token (session only)}
+✅ PUT /me/password {current_password, new_password} → 204 (ends the user's other sessions)
 ✅ GET  /projects · ✅ POST /projects {name, token} → 201 {project, sync} · ✅ GET/DELETE /projects/{id} · PATCH /projects/{id}
 ✅ POST /projects/{id}/sync           → re-sync inventory now (any status; 409 while a cycle runs) → {sync, project}
 ✅ GET  /projects/{id}/resources?kind= → inventory (server|load_balancer|volume|certificate|floating_ip|primary_ip)
@@ -24,7 +26,13 @@ GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metr
 
 ## Conventions
 
-- Auth: session cookie or `Authorization: Bearer hm_…` ([security](security.md#authentication)).
+- Auth: session cookie or `Authorization: Bearer hm_…` ([security](security.md#authentication)). Cookie requests other than
+  `GET`/`HEAD`/`OPTIONS` need `X-CSRF-Token` (from login or `GET /me`). A session has the scope of its role
+  (`owner`/`admin` → `admin`, `member` → `write`).
+- Login: wrong e-mail, wrong password, disabled user or no password → the same 401 `invalid_credentials`; unknown fields → 400;
+  `org_id` selects one of the user's orgs (default: the oldest membership). Throttled → 429 `too_many_attempts` + `Retry-After`.
+- `PUT /me/password`: new password 12–1024 characters (400 otherwise); wrong `current_password` → 403 `wrong_password`.
+  A user without a password (bootstrapped before M5a) sets the first one with an `admin` API key, without `current_password`.
 - Errors: `{ "error": { "code": "snake_case", "message": "…" } }` with proper HTTP status.
 - Pagination: `?page=&per_page=` (max 100), response `meta.pagination` — same shape as Hetzner's.
 - IDs are UUIDs; Hetzner IDs appear only as `hetzner_id`.
@@ -52,6 +60,6 @@ GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metr
   `active=false`. `DELETE` sets `ends_at` to now (a future silence is removed).
 - `GET /alerts/{id}` `notifications`: one entry per delivery job `{id, alert_event_id, channel_id, channel_name, status
   (queued|sent|failed), attempts, last_error, next_attempt_at, finished_at}`; the alert shows `acked_at`, `acked_by`, `last_notified_at`.
-- Implemented error codes: `unauthorized` (401), `forbidden` (403), `not_found` (404, also for other tenants' ids and malformed ids),
+- Implemented error codes: `unauthorized` (401), `invalid_credentials` (401, login), `forbidden` (403), `csrf_failed` (403), `wrong_password` (403), `too_many_attempts` (429), `not_found` (404, also for other tenants' ids and malformed ids),
   `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `invalid_token` (422, connect), `hetzner_invalid_token` / `hetzner_unavailable` (502),
   `hetzner_rate_limited` (503), `internal` (500).
