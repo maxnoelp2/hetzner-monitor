@@ -1,8 +1,10 @@
 use axum::Json;
 use axum::extract::rejection::{PathRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::bad_path;
@@ -10,7 +12,7 @@ use crate::auth::{Principal, Scope};
 use crate::error::ApiError;
 use crate::http::AppState;
 use crate::repo;
-use crate::repo::alerts::Filter;
+use crate::repo::alerts::{Acked, Filter};
 
 const MAX_PER_PAGE: u32 = 100;
 const DEFAULT_PER_PAGE: u32 = 25;
@@ -75,5 +77,43 @@ pub async fn get(
         .await?
         .ok_or_else(ApiError::not_found)?;
     let events = repo::alerts::events(&state.db, principal.org, id).await?;
-    Ok(Json(json!({ "alert": alert, "events": events })))
+    let notifications = repo::notifications::for_alert(&state.db, principal.org, id).await?;
+    Ok(Json(
+        json!({ "alert": alert, "events": events, "notifications": notifications }),
+    ))
+}
+
+/// `POST /alerts/{id}/ack`: stops re-notify; `resolved` is still sent. Idempotent.
+pub async fn ack(
+    State(state): State<AppState>,
+    principal: Principal,
+    id: Result<Path<Uuid>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    principal.require(Scope::Write)?;
+    let Path(id) = id.map_err(|r| bad_path(&r))?;
+    let mut tx = state.db.begin().await?;
+    match repo::alerts::ack(
+        &mut tx,
+        principal.org,
+        id,
+        principal.user,
+        OffsetDateTime::now_utc(),
+    )
+    .await?
+    {
+        Acked::Ok => {}
+        Acked::NotFound => return Err(ApiError::not_found()),
+        Acked::Resolved => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "alert_resolved",
+                "resolved alerts cannot be acknowledged",
+            ));
+        }
+    }
+    tx.commit().await?;
+    let alert = repo::alerts::get(&state.db, principal.org, id)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(json!({ "alert": alert })))
 }

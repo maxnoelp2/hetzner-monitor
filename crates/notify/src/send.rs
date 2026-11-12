@@ -348,8 +348,8 @@ mod tests {
     use crate::payload::Event;
     use crate::payload::tests::sample;
 
-    fn cfg(kind: &str, v: serde_json::Value) -> ChannelConfig {
-        ChannelConfig::from_parts(kind, &v).unwrap()
+    fn cfg(kind: &str, v: &serde_json::Value) -> ChannelConfig {
+        ChannelConfig::from_parts(kind, v).unwrap()
     }
 
     #[tokio::test]
@@ -387,7 +387,7 @@ mod tests {
         let hook = |p: &str| {
             cfg(
                 "webhook",
-                json!({ "url": format!("{}{p}", server.uri()), "secret": "0123456789abcdef" }),
+                &json!({ "url": format!("{}{p}", server.uri()), "secret": "0123456789abcdef" }),
             )
         };
         assert_eq!(n.send(&hook("/ok"), &p, "42").await, Ok(()));
@@ -422,7 +422,7 @@ mod tests {
         let n = Notifier::new(None, true).unwrap();
         let c = cfg(
             "ntfy",
-            json!({ "server": server.uri(), "topic": "alerts", "token": "tk_test" }),
+            &json!({ "server": server.uri(), "topic": "alerts", "token": "tk_test" }),
         );
         n.send(&c, &sample(Event::Fired), "1").await.unwrap();
         let received = &server.received_requests().await.unwrap()[0];
@@ -440,7 +440,7 @@ mod tests {
             "http://[::1]:9/",
             "http://localhost:9/",
         ] {
-            let c = cfg("slack", json!({ "url": url }));
+            let c = cfg("slack", &json!({ "url": url }));
             assert_eq!(
                 n.send(&c, &p, "1").await,
                 Err(SendError::permanent("target address not allowed")),
@@ -452,7 +452,7 @@ mod tests {
     #[tokio::test]
     async fn email_goes_through_the_transport() {
         let (n, stub) = Notifier::with_stub_mail("hm@example.com", true).unwrap();
-        let c = cfg("email", json!({ "to": ["ops@example.com"] }));
+        let c = cfg("email", &json!({ "to": ["ops@example.com"] }));
         n.send(&c, &sample(Event::Fired), "1").await.unwrap();
         let sent = stub.messages().await;
         assert_eq!(sent.len(), 1);

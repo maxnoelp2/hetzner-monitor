@@ -41,7 +41,8 @@ pub async fn get(
     let rule = repo::rules::get(&state.db, principal.org, id)
         .await?
         .ok_or_else(ApiError::not_found)?;
-    Ok(Json(json!({ "rule": rule })))
+    let channel_ids = repo::channels::for_rule(&state.db, principal.org, id).await?;
+    Ok(Json(json!({ "rule": rule, "channel_ids": channel_ids })))
 }
 
 /// `PATCH /rules/{id}`. `selector: null` or `""` clears the selector.
@@ -54,6 +55,8 @@ pub struct UpdateRule {
     severity: Option<String>,
     #[serde(default)]
     selector: Nullable,
+    /// Pinned channels; `[]` unpins all (the rule then routes by severity).
+    channel_ids: Option<Vec<Uuid>>,
 }
 
 /// A JSON field that distinguishes "absent" from `null`.
@@ -119,8 +122,16 @@ pub async fn update(
     if !rule.enabled && current.enabled {
         repo::alerts::close_for_rule(&mut tx, principal.org, id, "rule disabled", now).await?;
     }
+    if let Some(ids) = &body.channel_ids
+        && !repo::channels::set_for_rule(&mut tx, principal.org, id, ids).await?
+    {
+        return Err(ApiError::bad_request(
+            "`channel_ids` contains a channel that is not part of this organisation",
+        ));
+    }
+    let channel_ids = repo::channels::for_rule(&mut *tx, principal.org, id).await?;
     tx.commit().await?;
-    Ok(Json(json!({ "rule": rule })))
+    Ok(Json(json!({ "rule": rule, "channel_ids": channel_ids })))
 }
 
 /// `POST /rules`: a custom rule. Required: `name`, `check_type`, `severity`; `params` default `{}`.
@@ -239,7 +250,7 @@ fn valid_name(raw: &str) -> Result<String, ApiError> {
     Ok(name.to_owned())
 }
 
-fn valid_severity(severity: &str) -> Result<(), ApiError> {
+pub(super) fn valid_severity(severity: &str) -> Result<(), ApiError> {
     if matches!(severity, "info" | "warning" | "critical") {
         Ok(())
     } else {
@@ -250,7 +261,7 @@ fn valid_severity(severity: &str) -> Result<(), ApiError> {
 }
 
 /// Parses and normalises a selector.
-fn valid_selector(raw: &str) -> Result<String, ApiError> {
+pub(super) fn valid_selector(raw: &str) -> Result<String, ApiError> {
     if raw.len() > 1000 {
         return Err(ApiError::bad_request(
             "`selector` must be ≤ 1000 characters",
