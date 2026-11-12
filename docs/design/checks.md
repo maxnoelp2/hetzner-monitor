@@ -92,10 +92,11 @@ skip these rules entirely, so their alerts keep their state. Hold times (`for_s`
 
 `hm_core::cost::estimate` — net monthly prices from `GET /pricing` (one request per inventory cycle):
 server type by location (+ `server_backup.percentage` when `backup_window` is set; fallback: the `prices` embedded in
-the snapshot), load balancer type by location, volume `size` × `price_per_gb_month`, primary IP by type + `location`,
-floating IP by type + `home_location`. Hourly billing is capped at the monthly price, so this is the full-month figure.
+the snapshot), load balancer type by location, volume `size` × `price_per_gb_month`, primary IP by type + `location`
+(IPv6 is free: when `/pricing` has no `ipv6` entry under `primary_ips` — the real API lists only `ipv4`, seen 2026-11-12 —
+it counts as 0), floating IP by type + `home_location`. Hourly billing is capped at the monthly price, so this is the full-month figure.
 **Not included:** traffic overage, snapshots/images, object storage. Resources without a price are counted (`unpriced`)
-and not guessed. Stored per project and UTC day in `cost_estimates`; the latest one is shown on `GET /projects/{id}`.
+and not guessed; an inventory cycle logs their labels at `info`. Stored per project and UTC day in `cost_estimates`; the latest one is shown on `GET /projects/{id}`.
 
 ## Notes and assumptions
 

@@ -18,7 +18,7 @@ no agent on the servers, no Prometheus stack.
 `hm-hcloud`, connect + inventory): scheduler with fast/inventory tiers, budget and leases, rule engine, alert lifecycle,
 checks `server_status`, `resource_lifecycle`, `lb_target_health`, `traffic_quota`, system alert `hetzner_api`, rules/alerts API.
 **M3a done** (read-only real check passed): metrics tier, checks `cpu`/`network`/`disk_io`, custom rules (`POST`/`DELETE /rules`).
-**M3b implemented** (owner's read-only real check pending): inventory checks `certificate_expiry`, `deprecation`,
+**M3b done** (read-only real check passed): inventory checks `certificate_expiry`, `deprecation`,
 `hygiene_backups`/`_protection`/`_orphans`, `cost_change` (`/pricing` × inventory), `traffic_quota` forecast; daily
 derived snapshots (`cost_estimates`, `traffic_samples`, ADR-0011). No notifications yet (M4).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
@@ -54,6 +54,7 @@ scripts/smoke-m1.sh                                        # real-project smoke 
 scripts/smoke-m2.sh                                        # watch alerts while powering a TEST server off/on
 scripts/smoke-m3a.sh                                       # read-only: temporary low-threshold cpu rule fires from real metrics
 scripts/smoke-m3b.sh                                       # read-only: sync, list inventory/hygiene/cost alerts and the cost estimate
+python3 -I scripts/diag-pricing.py                         # read-only: why the cost estimate leaves resources unpriced (no names/IPs)
 ```
 
 - Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.

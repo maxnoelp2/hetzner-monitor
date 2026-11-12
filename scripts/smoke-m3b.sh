@@ -46,9 +46,8 @@ json_field() { python3 -I -c 'import json,sys; v=json.loads(sys.argv[1]); [v := 
 
 rules="$(api GET "/rules" -w '\n%{http_code}')"
 status="${rules##*$'\n'}"; rules="${rules%$'\n'*}"
-if [[ "$status" != "200" ]] || ! grep -q '"cost_change"' <<<"$rules"; then
-  echo "✗ GET /rules returned HTTP $status or no cost_change rule — is the stack running M3b and HM_API_KEY valid?"
-  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+if [[ "$status" != "200" ]]; then
+  echo "✗ GET /rules returned HTTP $status — is the stack running and HM_API_KEY valid?"
   exit 1
 fi
 
@@ -86,6 +85,14 @@ else
     echo "✗ sync failed: HTTP $status"; echo "${response%$'\n'*}"; exit 1
   fi
   echo "✓ synced"
+fi
+
+# Default rules are created per project; an M3b stack gives every project a cost_change rule.
+project_rules="$(api GET "/rules?project_id=$project_id")"
+if ! grep -q '"cost_change"' <<<"$project_rules"; then
+  echo "✗ project has no cost_change rule — is the stack running M3b (migration 0005)?"
+  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+  exit 1
 fi
 
 project="$(api GET "/projects/$project_id")"
