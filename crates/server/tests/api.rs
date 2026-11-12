@@ -5,7 +5,7 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{TOKEN, call, mock_inventory, mock_unauthorized, org_with_key, state};
-use hm_core::crypto::{self, MasterKey, Sealed};
+use hm_core::crypto::{self, Keyring, MasterKey, Sealed};
 use hm_server::auth::Scope;
 use hm_server::bootstrap;
 use serde_json::json;
@@ -184,7 +184,7 @@ async fn connect_stores_sealed_token_and_syncs(pool: PgPool) {
             .windows(TOKEN.len())
             .any(|w| w == TOKEN.as_bytes())
     );
-    let master = MasterKey::from_base64(common::TEST_MASTER_KEY).unwrap();
+    let master = Keyring::single(MasterKey::from_base64(common::TEST_MASTER_KEY).unwrap());
     let sealed = Sealed {
         secret_ct,
         dek_ct,

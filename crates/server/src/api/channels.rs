@@ -222,7 +222,7 @@ fn seal(state: &AppState, id: Uuid, config: &ChannelConfig) -> Result<Sealed, Ap
     let plain = zeroize::Zeroizing::new(
         serde_json::to_vec(&config.to_json()).map_err(|e| ApiError::internal(&e))?,
     );
-    crypto::seal(&state.master_key, id.as_bytes(), &plain).map_err(|e| ApiError::internal(&e))
+    crypto::seal(&state.keyring, id.as_bytes(), &plain).map_err(|e| ApiError::internal(&e))
 }
 
 fn name_conflict(err: sqlx::Error) -> ApiError {

@@ -65,7 +65,7 @@ pub enum CycleError {
 
 /// Decrypts a claimed project's token.
 pub fn open_token(state: &AppState, project: &Claimed) -> Result<Token, CycleError> {
-    let plain = crypto::open(&state.master_key, project.id.as_bytes(), &project.sealed())
+    let plain = crypto::open(&state.keyring, project.id.as_bytes(), &project.sealed())
         .map_err(|_| CycleError::Token)?;
     let token = String::from_utf8(plain.to_vec()).map_err(|_| CycleError::Token)?;
     Ok(Token::new(token))
