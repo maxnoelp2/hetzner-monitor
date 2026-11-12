@@ -26,7 +26,8 @@ SSRF guard), durable `notification_jobs` queue filled in the alert transaction a
 by `min_severity` or pinned rule channels, re-notify, `POST /alerts/{id}/ack`, silences, `/channels` incl. `/test`.
 **M5a** (login, sessions, rotation): `POST /auth/login` → `hm_session` cookie (SHA-256 stored, CSRF header derived from
 the token), `/me`, `PUT /me/password`, login throttling, Argon2id; `HM_MASTER_KEYS` + `keys status|rotate`, startup key check
-(ADR-0013). M5b (OpenAPI, README self-hosting, release) is next.
+(ADR-0013). **M5b**: OpenAPI 3.1 from code (`utoipa`, `/api/v1/openapi.json`, `hetzner-monitor openapi`), README
+self-hosting guide, Compose on the GHCR image, release workflow on `v*` tags, `CHANGELOG.md`, version 0.1.0 (ADR-0014).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -53,22 +54,29 @@ export DATABASE_URL=postgres://hetzner_monitor:hetzner_monitor@127.0.0.1:55432/h
 cargo test --all                                           # unit + integration tests (#[sqlx::test], fresh DB per test)
 cargo test -p hm-hcloud -- --ignored live_                 # live TLS check against api.hetzner.cloud (fake token)
 
+cargo run -q -p hm-server -- openapi > openapi.json        # OpenAPI document; CI lints it: npx --yes @redocly/cli@2.77.0 lint openapi.json
+
 # full stack (needs HM_MASTER_KEY in deploy/.env, see deploy/.env.example)
-docker compose -f deploy/docker-compose.yml up --build -d                       # app on http://127.0.0.1:8080
-docker compose -f deploy/docker-compose.yml run --rm app bootstrap --org <name> --email <email>  # prints admin key once
+# deploy/docker-compose.yml alone pulls the released GHCR image (HM_VERSION); add the build override for this checkout:
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --build -d   # app on http://127.0.0.1:8080
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml run --rm app bootstrap --org <name> --email <email>  # prints admin key once
 scripts/smoke-m1.sh                                        # real-project smoke test (HCLOUD_TOKEN, HM_API_KEY from env)
 scripts/smoke-m2.sh                                        # watch alerts while powering a TEST server off/on
 scripts/smoke-m3a.sh                                       # read-only: temporary low-threshold cpu rule fires from real metrics
 scripts/smoke-m3b.sh                                       # read-only: sync, list inventory/hygiene/cost alerts and the cost estimate
 scripts/smoke-m4.sh                                        # create channels from HM_TEST_* env, send a test to each, delete them
 scripts/smoke-m5a.sh                                       # login (HM_EMAIL, HM_PASSWORD from env) → /me → CSRF check → logout
-docker compose -f deploy/docker-compose.yml run --rm app users reset-password --email <email>  # prints a new password once
-docker compose -f deploy/docker-compose.yml run --rm app keys status   # or `keys rotate` (runbook: docs/design/security.md)
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml run --rm app users reset-password --email <email>  # prints a new password once
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml run --rm app keys status   # or `keys rotate` (runbook: docs/design/security.md)
 python3 -I scripts/diag-pricing.py                         # read-only: why the cost estimate leaves resources unpriced (no names/IPs)
 ```
 
 - Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.
 - New migrations: add `migrations/NNNN_description.sql`; they are embedded and applied on startup.
+- New endpoints: a handler with `#[utoipa::path]` (unique `operation_id`, tag, responses) returning typed `ToSchema`
+  structs, registered with `routes!` in `api/mod.rs` — never plain `.route(` (tests/openapi.rs enforces it).
+- Releases (ADR-0014): bump `[workspace.package] version`, the `HM_VERSION` default in `deploy/docker-compose.yml`, the
+  README links and `CHANGELOG.md` in one PR; the maintainer pushes the `vX.Y.Z` tag (agents never push tags).
 - Host ports are configurable via `HM_POSTGRES_PORT` / `HM_PORT` (see `deploy/.env.example`).
 - sqlx 0.9 rejects dynamically built SQL strings: write queries as literals (use `concat!` with a macro for shared column lists).
 - Tests use `tests/common/mod.rs`: `state()` / `state_with_mail()` (stub SMTP transport) with a fixed test master key and a wiremock Hetzner, `org_with_key()`, `call()`,

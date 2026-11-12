@@ -5,7 +5,7 @@
 #
 # Needs HM_EMAIL and HM_PASSWORD (from the environment or deploy/.env; never as arguments, never in
 # the chat). Get a password with:
-#   docker compose -f deploy/docker-compose.yml run --rm app users reset-password --email <email>
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml run --rm app users reset-password --email <email>
 # Usage: scripts/smoke-m5a.sh   — Python 3.9 compatible; nothing secret is printed.
 set -euo pipefail
 

@@ -4,11 +4,12 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M5a** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
+> Status: **M5 (v0.1.0)** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
 > forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
 > notifier, silences and ack are done; M5a: password login, server-side sessions with CSRF, versioned master keys and
-> `keys rotate` are done. Not yet: OpenAPI and release (M5b), PWA and Web Push (M6).
+> `keys rotate` are done; M5b: the OpenAPI 3.1 document generated from the handlers and the release pipeline (multi-arch
+> image on GHCR, [ADR-0014](docs/adr/0014-release-and-versioning.md)) are done. Not yet: PWA and Web Push (M6).
 > Everything else below is the target design.
 
 ## Bird's-eye view
