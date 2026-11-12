@@ -1,0 +1,8 @@
+# Development override: build the app image from this checkout instead of pulling a release.
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --build -d
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: hetzner-monitor:dev

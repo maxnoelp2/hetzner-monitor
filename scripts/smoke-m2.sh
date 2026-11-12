@@ -27,7 +27,7 @@ api() { # method path [curl args...] — secrets go via header file / stdin, not
 preflight="$(api GET "/alerts?per_page=1" -o /dev/null -w '%{http_code}')"
 if [[ "$preflight" != "200" ]]; then
   echo "✗ GET /alerts returned HTTP $preflight — is the running stack M2 and HM_API_KEY valid?"
-  echo "  rebuild: docker compose -f deploy/docker-compose.yml up --build -d"
+  echo "  rebuild: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up --build -d"
   exit 1
 fi
 
