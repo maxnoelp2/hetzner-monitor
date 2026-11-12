@@ -9,10 +9,32 @@
 #   read -rs HCLOUD_TOKEN && export HCLOUD_TOKEN      # READ-only Hetzner token
 #   scripts/smoke-m3b.sh
 #   HM_PROJECT_ID=<uuid> scripts/smoke-m3b.sh         # use an already connected project
+# Unset HM_API_KEY / HCLOUD_TOKEN are read from deploy/.env (override with HM_ENV_FILE).
 # Python 3.9 compatible; nothing secret is printed.
 set -euo pipefail
 
-: "${HM_API_KEY:?export HM_API_KEY (hetzner-monitor API key with write scope)}"
+# Fallback: take HM_API_KEY / HCLOUD_TOKEN from deploy/.env (or HM_ENV_FILE) when not exported.
+# Values are read into the environment only, never printed.
+env_file="${HM_ENV_FILE:-$(dirname "$0")/../deploy/.env}"
+for var in HM_API_KEY HCLOUD_TOKEN; do
+  if [[ -z "${!var:-}" && -f "$env_file" ]]; then
+    value="$(python3 -I -c '
+import sys
+name, path = sys.argv[1], sys.argv[2]
+for line in open(path):
+    line = line.strip()
+    if line.startswith("export "):
+        line = line[len("export "):]
+    if line.startswith(name + "="):
+        print(line.split("=", 1)[1].strip().strip("\"\x27"))
+        break
+' "$var" "$env_file")"
+    if [[ -n "$value" ]]; then export "$var=$value"; echo "→ $var taken from $env_file"; fi
+    unset value
+  fi
+done
+
+: "${HM_API_KEY:?export HM_API_KEY (hetzner-monitor API key with write scope) or put it in deploy/.env}"
 HM_URL="${HM_URL:-http://127.0.0.1:8080}"
 
 auth_header() { printf 'Authorization: Bearer %s' "$HM_API_KEY"; }
