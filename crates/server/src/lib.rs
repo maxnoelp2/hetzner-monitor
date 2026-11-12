@@ -14,6 +14,7 @@ pub mod http;
 pub mod inventory;
 pub mod keys;
 pub mod notifier;
+pub mod openapi;
 pub mod repo;
 pub mod scheduler;
 pub mod telemetry;

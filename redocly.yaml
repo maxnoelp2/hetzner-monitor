@@ -1,0 +1,4 @@
+# Redocly CLI lint for the generated OpenAPI document (CI job `openapi`).
+# Generate it with `cargo run -p hm-server -- openapi > openapi.json`.
+extends:
+  - recommended

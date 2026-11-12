@@ -4,9 +4,9 @@ use axum::Json;
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use super::rules::valid_selector;
@@ -14,23 +14,42 @@ use super::{bad_json, bad_path};
 use crate::auth::{Principal, Scope};
 use crate::error::ApiError;
 use crate::http::AppState;
+use crate::openapi::ErrorBody;
 use crate::repo;
-use crate::repo::silences::{Inserted, NewSilence};
+use crate::repo::silences::{Inserted, NewSilence, SilenceView};
+
+#[derive(Serialize, ToSchema)]
+pub struct SilenceList {
+    silences: Vec<SilenceView>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct SilenceEnvelope {
+    silence: SilenceView,
+}
 
 /// Longest silence.
 const MAX_SILENCE: Duration = Duration::days(365);
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListQuery {
-    /// Default `true`: only silences that have not ended.
+    /// Default `true`: only silences that have not ended; `false` = all.
     active: Option<bool>,
 }
 
+/// List silences. Scope: `read`.
+#[utoipa::path(get, path = "/silences", operation_id = "listSilences", tag = "silences",
+    params(ListQuery),
+    responses(
+        (status = OK, body = SilenceList),
+        (status = BAD_REQUEST, description = "Invalid query (`bad_request`)", body = ErrorBody),
+    ))]
 pub async fn list(
     State(state): State<AppState>,
     principal: Principal,
     query: Result<Query<ListQuery>, QueryRejection>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<SilenceList>, ApiError> {
     principal.require(Scope::Read)?;
     let Query(query) = query.map_err(|r| ApiError::bad_request(r.body_text()))?;
     let silences = repo::silences::list(
@@ -40,30 +59,41 @@ pub async fn list(
         OffsetDateTime::now_utc(),
     )
     .await?;
-    Ok(Json(json!({ "silences": silences })))
+    Ok(Json(SilenceList { silences }))
 }
 
-#[derive(Deserialize)]
+/// All scope fields are optional; none = the whole organisation.
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSilence {
     project_id: Option<Uuid>,
     resource_id: Option<Uuid>,
     rule_id: Option<Uuid>,
+    /// Label selector matched against resource labels.
     selector: Option<String>,
     /// Default: now.
     #[serde(default, with = "time::serde::rfc3339::option")]
     starts_at: Option<OffsetDateTime>,
+    /// In the future, at most 365 days after `starts_at`.
     #[serde(with = "time::serde::rfc3339")]
     ends_at: OffsetDateTime,
+    /// At most 500 characters.
     #[serde(default)]
     reason: String,
 }
 
+/// Create a silence. Scope: `write`.
+#[utoipa::path(post, path = "/silences", operation_id = "createSilence", tag = "silences",
+    request_body = CreateSilence,
+    responses(
+        (status = CREATED, body = SilenceEnvelope),
+        (status = BAD_REQUEST, description = "Invalid body, window, selector or scope (`bad_request`)", body = ErrorBody),
+    ))]
 pub async fn create(
     State(state): State<AppState>,
     principal: Principal,
     body: Result<Json<CreateSilence>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<(StatusCode, Json<SilenceEnvelope>), ApiError> {
     principal.require(Scope::Write)?;
     let Json(body) = body.map_err(|r| bad_json(&r))?;
     let now = OffsetDateTime::now_utc();
@@ -108,10 +138,19 @@ pub async fn create(
         ));
     };
     tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(json!({ "silence": silence }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(SilenceEnvelope { silence: *silence }),
+    ))
 }
 
-/// `DELETE /silences/{id}`: ends the silence now (a future one is removed).
+/// End a silence now (a future one is removed). Scope: `write`.
+#[utoipa::path(delete, path = "/silences/{id}", operation_id = "deleteSilence", tag = "silences",
+    params(("id" = Uuid, Path, description = "Silence id")),
+    responses(
+        (status = NO_CONTENT, description = "Ended"),
+        (status = NOT_FOUND, description = "Unknown silence (`not_found`)", body = ErrorBody),
+    ))]
 pub async fn remove(
     State(state): State<AppState>,
     principal: Principal,

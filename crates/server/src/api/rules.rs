@@ -4,56 +4,93 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use hm_core::checks::CheckType;
 use hm_core::selector::Selector;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use super::{bad_json, bad_path};
 use crate::auth::{Principal, Scope};
 use crate::error::ApiError;
 use crate::http::AppState;
+use crate::openapi::ErrorBody;
 use crate::repo;
-use crate::repo::rules::{Change, Deleted, NewRule, Patch};
+use crate::repo::rules::{Change, Deleted, NewRule, Patch, RuleView};
 
-#[derive(Deserialize)]
+#[derive(Serialize, ToSchema)]
+pub struct RuleList {
+    rules: Vec<RuleView>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct RuleEnvelope {
+    rule: RuleView,
+}
+
+/// A rule with the channels it is pinned to (`[]` = routed by severity).
+#[derive(Serialize, ToSchema)]
+pub struct RuleWithChannels {
+    rule: RuleView,
+    channel_ids: Vec<Uuid>,
+}
+
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListQuery {
+    /// Only rules of this project (rules for all projects of the org are always included).
     project_id: Option<Uuid>,
 }
 
+/// List rules. Scope: `read`.
+#[utoipa::path(get, path = "/rules", operation_id = "listRules", tag = "rules",
+    params(ListQuery),
+    responses((status = OK, body = RuleList)))]
 pub async fn list(
     State(state): State<AppState>,
     principal: Principal,
     Query(query): Query<ListQuery>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<RuleList>, ApiError> {
     principal.require(Scope::Read)?;
     let rules = repo::rules::list(&state.db, principal.org, query.project_id).await?;
-    Ok(Json(json!({ "rules": rules })))
+    Ok(Json(RuleList { rules }))
 }
 
+/// A rule and its pinned channels. Scope: `read`.
+#[utoipa::path(get, path = "/rules/{id}", operation_id = "getRule", tag = "rules",
+    params(("id" = Uuid, Path, description = "Rule id")),
+    responses(
+        (status = OK, body = RuleWithChannels),
+        (status = NOT_FOUND, description = "Unknown rule (`not_found`)", body = ErrorBody),
+    ))]
 pub async fn get(
     State(state): State<AppState>,
     principal: Principal,
     id: Result<Path<Uuid>, PathRejection>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<RuleWithChannels>, ApiError> {
     principal.require(Scope::Read)?;
     let Path(id) = id.map_err(|r| bad_path(&r))?;
     let rule = repo::rules::get(&state.db, principal.org, id)
         .await?
         .ok_or_else(ApiError::not_found)?;
     let channel_ids = repo::channels::for_rule(&state.db, principal.org, id).await?;
-    Ok(Json(json!({ "rule": rule, "channel_ids": channel_ids })))
+    Ok(Json(RuleWithChannels { rule, channel_ids }))
 }
 
 /// `PATCH /rules/{id}`. `selector: null` or `""` clears the selector.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateRule {
     name: Option<String>,
     enabled: Option<bool>,
+    /// Replaces the parameters; validated per check type.
+    #[schema(value_type = Option<Object>)]
     params: Option<Value>,
+    #[schema(value_type = Option<crate::openapi::enums::Severity>)]
     severity: Option<String>,
+    /// Label selector (e.g. `env=prod,role!=db`); `null` or `""` clears it.
     #[serde(default)]
+    #[schema(value_type = Option<String>)]
     selector: Nullable,
     /// Pinned channels; `[]` unpins all (the rule then routes by severity).
     channel_ids: Option<Vec<Uuid>>,
@@ -74,12 +111,21 @@ impl<'de> Deserialize<'de> for Nullable {
     }
 }
 
+/// Change a rule (default rules too). Disabling closes its open alerts. Scope: `write`.
+#[utoipa::path(patch, path = "/rules/{id}", operation_id = "updateRule", tag = "rules",
+    params(("id" = Uuid, Path, description = "Rule id")),
+    request_body = UpdateRule,
+    responses(
+        (status = OK, body = RuleWithChannels),
+        (status = BAD_REQUEST, description = "Invalid body, params, selector or channel id (`bad_request`)", body = ErrorBody),
+        (status = NOT_FOUND, description = "Unknown rule (`not_found`)", body = ErrorBody),
+    ))]
 pub async fn update(
     State(state): State<AppState>,
     principal: Principal,
     id: Result<Path<Uuid>, PathRejection>,
     body: Result<Json<UpdateRule>, JsonRejection>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Json<RuleWithChannels>, ApiError> {
     principal.require(Scope::Write)?;
     let Path(id) = id.map_err(|r| bad_path(&r))?;
     let Json(body) = body.map_err(|r| bad_json(&r))?;
@@ -131,21 +177,31 @@ pub async fn update(
     }
     let channel_ids = repo::channels::for_rule(&mut *tx, principal.org, id).await?;
     tx.commit().await?;
-    Ok(Json(json!({ "rule": rule, "channel_ids": channel_ids })))
+    Ok(Json(RuleWithChannels { rule, channel_ids }))
 }
 
 /// `POST /rules`: a custom rule. Required: `name`, `check_type`, `severity`; `params` default `{}`.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateRule {
+    /// Omit for a rule over all projects of the organisation.
     project_id: Option<Uuid>,
+    /// 1–200 characters.
     name: String,
+    /// Any check type except `hetzner_api`.
+    #[schema(value_type = crate::openapi::enums::CheckType)]
     check_type: String,
+    /// Check-specific parameters (docs/design/checks.md); default `{}`.
     #[serde(default = "empty_object")]
+    #[schema(value_type = Object)]
     params: Value,
+    #[schema(value_type = crate::openapi::enums::Severity)]
     severity: String,
+    /// Label selector, e.g. `env=prod,role!=db`.
     selector: Option<String>,
+    /// One resource of `project_id`.
     resource_id: Option<Uuid>,
+    /// Default `true`.
     #[serde(default = "yes")]
     enabled: bool,
 }
@@ -158,11 +214,18 @@ const fn yes() -> bool {
     true
 }
 
+/// Create a custom rule. Scope: `write`.
+#[utoipa::path(post, path = "/rules", operation_id = "createRule", tag = "rules",
+    request_body = CreateRule,
+    responses(
+        (status = CREATED, body = RuleEnvelope),
+        (status = BAD_REQUEST, description = "Invalid body, check type, params, selector or scope (`bad_request`)", body = ErrorBody),
+    ))]
 pub async fn create(
     State(state): State<AppState>,
     principal: Principal,
     body: Result<Json<CreateRule>, JsonRejection>,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<(StatusCode, Json<RuleEnvelope>), ApiError> {
     principal.require(Scope::Write)?;
     let Json(body) = body.map_err(|r| bad_json(&r))?;
     let org = principal.org;
@@ -220,10 +283,17 @@ pub async fn create(
         },
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(json!({ "rule": rule }))))
+    Ok((StatusCode::CREATED, Json(RuleEnvelope { rule })))
 }
 
-/// `DELETE /rules/{id}`: custom rules only; default rules can be disabled instead.
+/// Delete a custom rule and its alerts; default rules can only be disabled. Scope: `write`.
+#[utoipa::path(delete, path = "/rules/{id}", operation_id = "deleteRule", tag = "rules",
+    params(("id" = Uuid, Path, description = "Rule id")),
+    responses(
+        (status = NO_CONTENT, description = "Deleted"),
+        (status = NOT_FOUND, description = "Unknown rule (`not_found`)", body = ErrorBody),
+        (status = CONFLICT, description = "Default rule (`default_rule`)", body = ErrorBody),
+    ))]
 pub async fn remove(
     State(state): State<AppState>,
     principal: Principal,

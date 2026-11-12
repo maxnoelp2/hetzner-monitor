@@ -1,0 +1,7 @@
+# Accepted findings of `redocly lint` (see .redocly.yaml). Each entry needs a reason.
+openapi.json:
+  operation-4xx-response:
+    # Health probes and the API description have no client errors.
+    - '#/paths/~1healthz/get/responses'
+    - '#/paths/~1readyz/get/responses'
+    - '#/paths/~1api~1v1~1openapi.json/get/responses'

@@ -7,15 +7,19 @@ use uuid::Uuid;
 use super::OrgId;
 
 /// A rule as stored and shown in the API.
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, utoipa::ToSchema)]
 pub struct RuleView {
     pub id: Uuid,
     pub project_id: Option<Uuid>,
     pub name: String,
+    #[schema(value_type = crate::openapi::enums::CheckType)]
     pub check_type: String,
+    /// Check-specific parameters (docs/design/checks.md).
+    #[schema(value_type = Object)]
     pub params: Json<Value>,
     pub selector: Option<String>,
     pub resource_id: Option<Uuid>,
+    #[schema(value_type = crate::openapi::enums::Severity)]
     pub severity: String,
     pub enabled: bool,
     pub is_default: bool,
