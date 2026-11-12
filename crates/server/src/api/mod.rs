@@ -2,8 +2,10 @@
 
 mod alerts;
 mod api_keys;
+mod channels;
 mod projects;
 mod rules;
+mod silences;
 
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, PathRejection};
@@ -28,6 +30,17 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/alerts", get(alerts::list))
         .route("/alerts/{id}", get(alerts::get))
+        .route("/alerts/{id}/ack", post(alerts::ack))
+        .route("/channels", get(channels::list).post(channels::create))
+        .route(
+            "/channels/{id}",
+            get(channels::get)
+                .patch(channels::update)
+                .delete(channels::remove),
+        )
+        .route("/channels/{id}/test", post(channels::test))
+        .route("/silences", get(silences::list).post(silences::create))
+        .route("/silences/{id}", delete(silences::remove))
         .route("/api-keys", get(api_keys::list).post(api_keys::create))
         .route("/api-keys/{id}", delete(api_keys::revoke))
 }

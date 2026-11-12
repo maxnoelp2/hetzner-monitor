@@ -1,5 +1,7 @@
 //! Per-channel message bodies built from a [`Payload`].
 
+use std::fmt::Write as _;
+
 use hmac::{Hmac, KeyInit, Mac};
 use serde_json::{Value, json};
 use sha2::Sha256;
@@ -18,7 +20,7 @@ pub fn slack(p: &Payload) -> Value {
         slack_escape(&p.project.name)
     );
     if let Some(link) = &p.link {
-        text.push_str(&format!("\n<{}|Open alert>", slack_escape(link)));
+        let _ = write!(text, "\n<{}|Open alert>", slack_escape(link));
     }
     json!({ "text": text })
 }
@@ -81,7 +83,7 @@ pub fn signature(secret: &[u8], body: &[u8]) -> String {
     let mut out = String::with_capacity(7 + digest.len() * 2);
     out.push_str("sha256=");
     for b in digest {
-        out.push_str(&format!("{b:02x}"));
+        let _ = write!(out, "{b:02x}");
     }
     out
 }
