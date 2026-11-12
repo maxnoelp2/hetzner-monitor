@@ -14,13 +14,13 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
-## M5 — in progress
+## M5 — in progress (M5a done)
 
 - M5a ([plan](plans/2026-11-12-m5a-auth-sessions-rotation.md), [ADR-0013](adr/0013-sessions-csrf-and-key-rotation.md)):
   - [x] Password login (Argon2id), server-side sessions (`hm_session` cookie), derived CSRF token, `/me`, `PUT /me/password`, login throttling
   - [x] Initial password from `bootstrap`, `users reset-password`
   - [x] Master-key rotation: `HM_MASTER_KEYS`, `keys status` / `keys rotate`, startup check of stored key versions
-  - [ ] Real check on the local stack (`scripts/smoke-m5a.sh`)
+  - [x] Real check on the local stack (`scripts/smoke-m5a.sh`): login, `/me`, CSRF refusal/acceptance, logout (2026-11-12)
 - M5b: OpenAPI (`utoipa`) at `/api/v1/openapi.json`, README self-hosting guide, release workflow (GHCR), v0.1.0
 
 ## M4 — done ([plan](plans/2026-11-12-m4-notifications.md))
