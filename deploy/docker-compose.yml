@@ -30,6 +30,8 @@ services:
       HM_DATABASE_URL: postgres://hetzner_monitor:${HM_POSTGRES_PASSWORD:-hetzner_monitor}@postgres:5432/hetzner_monitor
       # Required — the app refuses to start without it. How to generate one: see deploy/.env.example
       HM_MASTER_KEY: ${HM_MASTER_KEY:-}
+      # Instead of HM_MASTER_KEY, for rotation: HM_MASTER_KEYS=1:<old>,2:<new> (docs/design/security.md)
+      HM_MASTER_KEYS: ${HM_MASTER_KEYS:-}
       HM_MODE: ${HM_MODE:-all}
       HM_LOG: ${HM_LOG:-info}
       # Notifications (docs/design/configuration.md). Empty = unset: no email channels, no links.

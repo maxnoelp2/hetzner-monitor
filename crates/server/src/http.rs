@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
 use axum::{Json, Router};
-use hm_core::crypto::MasterKey;
+use hm_core::crypto::Keyring;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
@@ -19,12 +19,14 @@ const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub master_key: Arc<MasterKey>,
+    pub keyring: Arc<Keyring>,
     pub hcloud: hm_hcloud::Client,
     /// Sends notifications (channel tests from the API, queued jobs from the notifier).
     pub notifier: hm_notify::Notifier,
-    /// `HM_BASE_URL` without trailing slash, for links in notifications.
+    /// `HM_BASE_URL` without trailing slash, for links in notifications and the cookie's `Secure` flag.
     pub base_url: Option<Arc<str>>,
+    /// Failed-login counters (in-process).
+    pub login_throttle: Arc<crate::throttle::LoginThrottle>,
 }
 
 /// Builds the application router.

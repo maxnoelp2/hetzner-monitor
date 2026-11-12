@@ -121,7 +121,7 @@ pub fn decrypt_config(
     kind: &str,
     sealed: &Sealed,
 ) -> Result<ChannelConfig, SendError> {
-    let plain = crypto::open(&state.master_key, channel_id.as_bytes(), sealed)
+    let plain = crypto::open(&state.keyring, channel_id.as_bytes(), sealed)
         .map_err(|_| permanent("channel config cannot be decrypted"))?;
     let value: serde_json::Value =
         serde_json::from_slice(&plain).map_err(|_| permanent("channel config is corrupt"))?;

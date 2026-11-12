@@ -5,7 +5,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use hm_core::crypto::MasterKey;
+use hm_core::crypto::{Keyring, MasterKey};
 use hm_core::secret::Secret;
 use hm_notify::{SmtpSettings, SmtpTls};
 
@@ -52,8 +52,8 @@ pub enum ConfigError {
 pub struct Config {
     /// Postgres connection string (contains credentials, hence secret).
     pub database_url: Secret<String>,
-    /// Envelope-encryption master key (`HM_MASTER_KEY` or `HM_MASTER_KEY_FILE`).
-    pub master_key: Arc<MasterKey>,
+    /// Envelope-encryption master keys (`HM_MASTER_KEY(_FILE)` = version 1, or `HM_MASTER_KEYS(_FILE)`).
+    pub keyring: Arc<Keyring>,
     pub bind: SocketAddr,
     pub log: String,
     pub mode: Mode,
@@ -90,7 +90,7 @@ impl Config {
         };
         Ok(Self {
             database_url,
-            master_key: Arc::new(master_key_from_lookup(&lookup, &read_file)?),
+            keyring: Arc::new(keyring_from_lookup(&lookup, &read_file)?),
             bind: bind_from_lookup(&lookup)?,
             log: lookup("HM_LOG").unwrap_or_else(|| DEFAULT_LOG.to_owned()),
             mode,
@@ -197,32 +197,54 @@ fn database_url_from_lookup(
         .ok_or(ConfigError::Missing("HM_DATABASE_URL"))
 }
 
-fn master_key_from_lookup(
+/// Reads only the master keys (used by `keys` CLI commands).
+pub fn keyring_from_env() -> Result<Keyring, ConfigError> {
+    keyring_from_lookup(&|key: &str| std::env::var(key).ok(), &|path: &Path| {
+        std::fs::read_to_string(path)
+    })
+}
+
+const KEY_VARS: [&str; 4] = [
+    "HM_MASTER_KEY",
+    "HM_MASTER_KEY_FILE",
+    "HM_MASTER_KEYS",
+    "HM_MASTER_KEYS_FILE",
+];
+
+fn keyring_from_lookup(
     lookup: &impl Fn(&str) -> Option<String>,
     read_file: &impl Fn(&Path) -> std::io::Result<String>,
-) -> Result<MasterKey, ConfigError> {
-    let inline = lookup("HM_MASTER_KEY").filter(|value| !value.trim().is_empty());
-    let file = lookup("HM_MASTER_KEY_FILE").filter(|value| !value.trim().is_empty());
-    let (var, encoded) = match (inline, file) {
-        (Some(_), Some(_)) => {
-            return Err(ConfigError::Invalid {
-                var: "HM_MASTER_KEY",
-                reason: "set either HM_MASTER_KEY or HM_MASTER_KEY_FILE, not both".to_owned(),
-            });
-        }
-        (Some(value), None) => ("HM_MASTER_KEY", Secret::new(value)),
-        (None, Some(path)) => {
-            let content = read_file(Path::new(&path)).map_err(|err| ConfigError::Invalid {
-                var: "HM_MASTER_KEY_FILE",
-                reason: format!("cannot read `{path}`: {err}"),
-            })?;
-            ("HM_MASTER_KEY_FILE", Secret::new(content))
-        }
-        (None, None) => return Err(ConfigError::Missing("HM_MASTER_KEY")),
+) -> Result<Keyring, ConfigError> {
+    let mut set = KEY_VARS
+        .iter()
+        .filter_map(|var| non_empty(lookup, var).map(|value| (*var, Secret::new(value))));
+    let (var, value) = set.next().ok_or(ConfigError::Missing("HM_MASTER_KEY"))?;
+    if let Some((other, _)) = set.next() {
+        return Err(ConfigError::Invalid {
+            var,
+            reason: format!("set only one of {}, not also {other}", KEY_VARS.join(", ")),
+        });
+    }
+    let encoded = if var.ends_with("_FILE") {
+        let path = value.expose();
+        let content = read_file(Path::new(path)).map_err(|err| ConfigError::Invalid {
+            var,
+            reason: format!("cannot read `{path}`: {err}"),
+        })?;
+        Secret::new(content)
+    } else {
+        value
     };
-    MasterKey::from_base64(encoded.expose()).map_err(|err| ConfigError::Invalid {
+    let ring = if var.starts_with("HM_MASTER_KEYS") {
+        Keyring::parse(encoded.expose())
+    } else {
+        MasterKey::from_base64(encoded.expose()).map(Keyring::single)
+    };
+    ring.map_err(|err| ConfigError::Invalid {
         var,
-        reason: format!("{err}; generate one with `hetzner-monitor master-key generate`"),
+        reason: format!(
+            "{err}; generate a key with `hetzner-monitor master-key generate`, list several as `1:<key>,2:<key>`"
+        ),
     })
 }
 
@@ -255,10 +277,7 @@ mod tests {
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect();
         // A valid master key unless the test sets the key variables itself.
-        if !map.contains_key("HM_MASTER_KEY")
-            && !map.contains_key("HM_MASTER_KEY_FILE")
-            && !map.contains_key("NO_KEY")
-        {
+        if !map.keys().any(|k| k.starts_with("HM_MASTER_KEY")) && !map.contains_key("NO_KEY") {
             map.insert("HM_MASTER_KEY".to_owned(), KEY.to_owned());
         }
         move |key| map.get(key).cloned()
@@ -299,6 +318,44 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn several_versioned_keys() {
+        const KEY2: &str = "HyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4=";
+        let config = load(&[
+            ("HM_DATABASE_URL", "x"),
+            ("HM_MASTER_KEYS", &format!("1:{KEY}, 3:{KEY2}")),
+        ])
+        .unwrap();
+        assert_eq!(config.keyring.current_version(), 3);
+        assert!(config.keyring.contains(1) && !config.keyring.contains(2));
+
+        let config = Config::from_lookup(
+            lookup(&[("HM_DATABASE_URL", "x"), ("HM_MASTER_KEYS_FILE", "/k")]),
+            |_| Ok(format!("2:{KEY2}\n")),
+        )
+        .unwrap();
+        assert_eq!(config.keyring.current_version(), 2);
+
+        for (var, value) in [
+            ("HM_MASTER_KEYS", KEY.to_owned()),
+            ("HM_MASTER_KEYS", format!("1:{KEY},1:{KEY2}")),
+            ("HM_MASTER_KEYS", "1:c2hvcnQ=".to_owned()),
+        ] {
+            let err = load(&[("HM_DATABASE_URL", "x"), (var, &value)]).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::Invalid { var: "HM_MASTER_KEYS", ref reason } if !reason.contains(KEY)),
+                "{err:?}"
+            );
+        }
+        let err = load(&[
+            ("HM_DATABASE_URL", "x"),
+            ("HM_MASTER_KEY", KEY),
+            ("HM_MASTER_KEYS", &format!("1:{KEY}")),
+        ])
+        .unwrap_err();
+        assert!(matches!(err, ConfigError::Invalid { .. }));
     }
 
     #[test]

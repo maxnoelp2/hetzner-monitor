@@ -38,7 +38,7 @@ pub async fn connect(
     let id = Uuid::new_v4();
     let sealed = {
         let plain = token.reveal_for_storage();
-        crypto::seal(&state.master_key, id.as_bytes(), plain.as_bytes())
+        crypto::seal(&state.keyring, id.as_bytes(), plain.as_bytes())
             .map_err(|e| ApiError::internal(&e))?
     };
     let mut tx = state.db.begin().await?;
