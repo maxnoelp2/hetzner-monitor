@@ -1,9 +1,27 @@
 # Design: HTTP API
 
-Status: endpoints marked ✅ are **implemented** (M1–M5a); the rest **proposed** · Crate: `crates/server`
+Status: endpoints marked ✅ are **implemented** (M1–M5b); the rest **proposed** · Crate: `crates/server`
 
-REST under `/api/v1`, JSON. The OpenAPI document is **generated from code** (`utoipa`) and served at
-`/api/v1/openapi.json`; the PWA's TypeScript client is generated from it.
+REST under `/api/v1`, JSON. The OpenAPI 3.1 document is **generated from code** (`utoipa` 6 + `utoipa-axum` 0.3) and
+served at `GET /api/v1/openapi.json` (unauthenticated) and printed by `hetzner-monitor openapi`; the PWA's TypeScript
+client is generated from it.
+
+## OpenAPI
+
+- Every handler has a `#[utoipa::path]` with a unique camelCase `operationId` (`listProjects`, `createChannel`, …), a tag,
+  parameters, request body, success response and its specific error responses. Routes are registered **only** with
+  `utoipa_axum::routes!` in `crates/server/src/http.rs` and `crates/server/src/api/mod.rs`; `tests/openapi.rs` fails on
+  plain Axum routing there and checks that every documented operation reaches a handler, so the document lists exactly
+  the router's routes.
+- Handlers return typed structs (`Serialize` + `ToSchema`), so response schemas are derived from what is serialised.
+  Text columns with a closed set of values (severity, alert state, resource kind, channel type, …) are documented as
+  string enums (`crate::openapi::enums`). In response schemas every field is required (`None` is sent as `null`), except
+  fields skipped when empty (`Health.reason`, `TestResult.error`/`retryable`); request `Option` fields may be omitted.
+- Security schemes: `api_key` (HTTP Bearer), `session` (cookie `hm_session`), `csrf` (header `X-CSRF-Token`). The
+  requirement per operation is derived from the method like the auth layer does: GET → `api_key` or `session`;
+  other methods → `api_key` or `session` + `csrf`; `/auth/login`, `/healthz`, `/readyz`, `/openapi.json` → none.
+  Authenticated operations reference the shared `401 Unauthorized` and `403 Forbidden` responses.
+- CI lints the document with Redocly CLI (`redocly.yaml`, accepted findings in `.redocly.lint-ignore.yaml`).
 
 ```
 ✅ POST /auth/login {email, password, org_id?} → {user, org, role, auth, csrf_token} + Set-Cookie hm_session · ✅ POST /auth/logout → 204
@@ -21,7 +39,8 @@ GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later gra
 ✅ POST /channels/{id}/test → {ok: true} | {ok: false, error, retryable}
 ✅ GET /silences?active=true|false · ✅ POST /silences {project_id?, resource_id?, rule_id?, selector?, starts_at?, ends_at, reason?} → 201 {silence} · ✅ DELETE /silences/{id} (ends it now)
 ✅ GET /api-keys · ✅ POST /api-keys {name, scopes} → 201 {api_key, key} (key shown once) · ✅ DELETE /api-keys/{id} (revoke)
-GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metrics; unauthenticated only if bound to localhost/internal)
+✅ GET /api/v1/openapi.json → OpenAPI 3.1 document (no auth)
+✅ GET /healthz · ✅ GET /readyz → {status, reason?} · GET /metrics (Prometheus, own operational metrics; unauthenticated only if bound to localhost/internal)
 ```
 
 ## Conventions
@@ -60,6 +79,6 @@ GET    /healthz · GET /readyz · GET /metrics (Prometheus, own operational metr
   `active=false`. `DELETE` sets `ends_at` to now (a future silence is removed).
 - `GET /alerts/{id}` `notifications`: one entry per delivery job `{id, alert_event_id, channel_id, channel_name, status
   (queued|sent|failed), attempts, last_error, next_attempt_at, finished_at}`; the alert shows `acked_at`, `acked_by`, `last_notified_at`.
-- Implemented error codes: `unauthorized` (401), `invalid_credentials` (401, login), `forbidden` (403), `csrf_failed` (403), `wrong_password` (403), `too_many_attempts` (429), `not_found` (404, also for other tenants' ids and malformed ids),
-  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `invalid_token` (422, connect), `hetzner_invalid_token` / `hetzner_unavailable` (502),
+- Implemented error codes (schema `ErrorCode`): `unauthorized` (401), `invalid_credentials` (401, login), `forbidden` (403), `csrf_failed` (403), `wrong_password` (403), `too_many_attempts` (429), `not_found` (404, also for other tenants' ids and malformed ids),
+  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `alert_resolved` (409), `invalid_token` (422, connect), `email_disabled` (422), `hetzner_invalid_token` / `hetzner_unavailable` (502),
   `hetzner_rate_limited` (503), `internal` (500).

@@ -14,14 +14,19 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
-## M5 — in progress (M5a done)
+## M5 — in progress (M5a done, M5b implemented)
 
 - M5a ([plan](plans/2026-11-12-m5a-auth-sessions-rotation.md), [ADR-0013](adr/0013-sessions-csrf-and-key-rotation.md)):
   - [x] Password login (Argon2id), server-side sessions (`hm_session` cookie), derived CSRF token, `/me`, `PUT /me/password`, login throttling
   - [x] Initial password from `bootstrap`, `users reset-password`
   - [x] Master-key rotation: `HM_MASTER_KEYS`, `keys status` / `keys rotate`, startup check of stored key versions
   - [x] Real check on the local stack (`scripts/smoke-m5a.sh`): login, `/me`, CSRF refusal/acceptance, logout (2026-11-12)
-- M5b: OpenAPI (`utoipa`) at `/api/v1/openapi.json`, README self-hosting guide, release workflow (GHCR), v0.1.0
+- M5b ([plan](plans/2026-11-12-m5b-openapi-release.md), [ADR-0014](adr/0014-release-and-versioning.md)):
+  - [x] OpenAPI 3.1 generated with `utoipa` at `/api/v1/openapi.json` and `hetzner-monitor openapi`; tests keep it complete; Redocly lint in CI
+  - [x] README self-hosting guide; Compose on the GHCR image (`HM_VERSION`), build override for development
+  - [x] Release workflow (tag `v*` → native amd64/arm64 builds → GHCR manifest → GitHub release), `CHANGELOG.md`, version 0.1.0
+  - [ ] Real check: fresh install following only the README (owner, test project)
+  - [ ] Release v0.1.0 tagged by the owner, image public on GHCR
 
 ## M4 — done ([plan](plans/2026-11-12-m4-notifications.md))
 

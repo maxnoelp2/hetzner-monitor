@@ -1,6 +1,6 @@
 # Plan: M5b — OpenAPI, self-hosting guide, release v0.1.0
 
-- Status: Draft
+- Status: In progress
 - Milestone: M5 (second half; M5a is [its own plan](2026-11-12-m5a-auth-sessions-rotation.md))
 - Owner: agent (Claude), reviewed by the maintainer
 - Started: 2026-11-12
@@ -84,40 +84,40 @@ PWA and external tools can render the JSON).
 
 ## Approach
 
-1. [ ] Dependencies: `utoipa` (`macros`, `uuid`, `time`) and `utoipa-axum` in `[workspace.dependencies]`, used by `hm-server`.
+1. [x] Dependencies: `utoipa` (`macros`, `uuid`, `time`) and `utoipa-axum` in `[workspace.dependencies]`, used by `hm-server`.
        Workspace version `0.1.0`.
-2. [ ] Schemas: derive `ToSchema` on the repo view types and request bodies; `Json<Value>` fields (`labels`, `params`, event
+2. [x] Schemas: derive `ToSchema` on the repo view types and request bodies; `Json<Value>` fields (`labels`, `params`, event
        `data`) as free-form objects; closed string sets (`severity`, alert `state`, resource `kind`, channel `type`, project
        `status`, `role`, `auth`) documented as string enums via `#[schema(value_type = …)]` so the TS client gets literal
        unions. Response envelopes as typed structs (`ProjectEnvelope { project }`, `AlertList { alerts, meta }`, …); the
        `cost_estimate` that `GET /projects/{id}` injects today becomes a `#[serde(flatten)]` struct. Compare wire JSON
        before/after with the existing integration tests (they assert on the JSON).
-3. [ ] Paths: `#[utoipa::path]` on every handler with `operation_id`, tag, params, request body, responses (success +
+3. [x] Paths: `#[utoipa::path]` on every handler with `operation_id`, tag, params, request body, responses (success +
        error codes), `security`; the scope in the description. Router built with `OpenApiRouter` + `routes!`; `/healthz`,
        `/readyz` included; `split_for_parts()` yields the Axum router and the `OpenApi` document.
-4. [ ] `openapi.rs`: top-level `#[derive(OpenApi)]` with `info` (title, version from `CARGO_PKG_VERSION`, license
+4. [x] `openapi.rs`: top-level `#[derive(OpenApi)]` with `info` (title, version from `CARGO_PKG_VERSION`, license
        `AGPL-3.0-only`), security schemes via a `Modify`, tags; `GET /api/v1/openapi.json` serves the document (built once,
        held in an `Arc`); CLI `hetzner-monitor openapi` prints it.
-5. [ ] Tests (`crates/server/tests/openapi.rs`): validity checks, every documented operation reaches a handler, security
+5. [x] Tests (`crates/server/tests/openapi.rs`): validity checks, every documented operation reaches a handler, security
        per operation as specified above, guard against plain `.route(` in `api/`. CI job `openapi`: `cargo run -- openapi
        > openapi.json` + `npx --yes @redocly/cli@2.77.0 lint` (rules tuned in `redocly.yaml` only where justified).
-6. [ ] Compose: `deploy/docker-compose.yml` pulls the GHCR image (`HM_VERSION`, default `0.1.0`); new
+6. [x] Compose: `deploy/docker-compose.yml` pulls the GHCR image (`HM_VERSION`, default `0.1.0`); new
        `deploy/docker-compose.build.yml` adds `build:` and image `hetzner-monitor:dev`. Update `CLAUDE.md` commands,
        smoke-script hints and `deploy/.env.example` (`HM_VERSION`).
-7. [ ] Release workflow `.github/workflows/release.yml` (tag `v*`): `verify` (tag = workspace version, CHANGELOG has the
+7. [x] Release workflow `.github/workflows/release.yml` (tag `v*`): `verify` (tag = workspace version, CHANGELOG has the
        section) → `build` matrix amd64/arm64 on native runners, push by digest, `cache-from/to: type=gha,scope=<arch>` →
        `merge` (`docker buildx imagetools create` with `metadata-action` tags `{{version}}`, `{{major}}.{{minor}}`, `latest`;
        the `{{major}}` tag is skipped while 0.x) → `release` (`gh release create` with the CHANGELOG section). OCI labels
        from `metadata-action` link the package to the repository. Also bump the CI `docker` job to buildx v4 / build-push v7.
-8. [ ] `CHANGELOG.md` with 0.1.0 (M0–M5 summary, known limits: no PWA yet, no RAM/disk metrics).
-9. [ ] README rewrite: what it is, status, quick start / self-hosting guide (steps from the acceptance criteria), a Caddy
+8. [x] `CHANGELOG.md` with 0.1.0 (M0–M5 summary, known limits: no PWA yet, no RAM/disk metrics).
+9. [x] README rewrite: what it is, status, quick start / self-hosting guide (steps from the acceptance criteria), a Caddy
        reverse-proxy example, API usage with curl and the OpenAPI link, development section (build override). Remove
        "design phase". Each command tested by me locally against a throwaway Compose project (with a locally built image
        tagged like the GHCR one, since the release does not exist yet).
-10. [ ] ADR-0014 (Proposed): release and versioning — SemVer, `v*` tags cut by a maintainer, multi-arch image on GHCR with
+10. [x] ADR-0014 (Proposed): release and versioning — SemVer, `v*` tags cut by a maintainer, multi-arch image on GHCR with
        `X.Y.Z` / `X.Y` / `latest`, pre-1.0 compatibility promise (DB migrations forward-only, API under `/api/v1` may
        still change in minor releases and is listed in the CHANGELOG), compose pins an exact version.
-11. [ ] Docs (`api.md`, `configuration.md`, `CLAUDE.md`, `ARCHITECTURE.md`, roadmap), fmt + clippy + `cargo test --all`, PR.
+11. [x] Docs (`api.md`, `configuration.md`, `CLAUDE.md`, `ARCHITECTURE.md`, roadmap), fmt + clippy + `cargo test --all`, PR.
 12. [ ] Owner: real check from the README; after merge, the owner tags `v0.1.0`, the workflow publishes; the owner sets the
        GHCR package to **public** once (new packages are private by default) and pulls it anonymously.
 
@@ -149,3 +149,17 @@ PWA and external tools can render the JSON).
 ## Progress log
 
 - 2026-11-12 — Plan drafted after reading the docs and code listed above; versions re-verified.
+- 2026-11-12 — Approved by the owner. Implemented:
+  - utoipa's `Modify` runs when `ApiDoc::openapi()` is built, i.e. **before** `utoipa-axum` adds the paths, so the
+    per-operation security and shared responses are applied by `openapi::finish()` after `split_for_parts()`.
+  - The ref check found that schemas referenced only from query parameters (`AlertFilter`, `ResourceKind`) are not
+    collected automatically; they are listed in `components(schemas(...))`.
+  - Redocly found responses without `description` (required in 3.1); `finish()` fills the status text. An untagged
+    `oneOf` for channel configs needed `additionalProperties: false` to be mutually exclusive.
+  - Response schemas mark all fields required (they are always serialised, `None` as `null`) except an explicit list
+    of fields skipped when empty; request schemas are listed explicitly.
+  - Wire JSON unchanged: the existing integration tests pass without modification.
+  - `clippy.toml` allows `OpenAPI`, `HttpOnly`, `SameSite` in doc comments (they become operation descriptions).
+  - Dev commands now need `-f deploy/docker-compose.build.yml`; `deploy/docker-compose.yml` alone pulls the release.
+  - `deploy/.env.example` could not be read or edited by the agent (permission rule for `.env*`); `HM_VERSION` is
+    documented in configuration.md and the README instead.
