@@ -26,7 +26,7 @@ impl ApiError {
         Self::new(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
-            "missing, invalid or revoked API key",
+            "missing, invalid, expired or revoked credentials",
         )
     }
 
@@ -34,7 +34,16 @@ impl ApiError {
         Self::new(
             StatusCode::FORBIDDEN,
             "forbidden",
-            format!("this API key lacks the `{scope}` scope"),
+            format!("this API key or session lacks the `{scope}` scope"),
+        )
+    }
+
+    /// A cookie-authenticated, state-changing request without a valid `X-CSRF-Token`.
+    pub fn csrf_failed() -> Self {
+        Self::new(
+            StatusCode::FORBIDDEN,
+            "csrf_failed",
+            "missing or invalid X-CSRF-Token header",
         )
     }
 

@@ -11,6 +11,8 @@ pub mod checks;
 pub mod cost;
 pub mod crypto;
 pub mod delivery;
+pub mod password;
 pub mod secret;
 pub mod selector;
 pub mod series;
+pub mod session;

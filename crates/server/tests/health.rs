@@ -89,6 +89,7 @@ async fn migrations_create_all_tables(pool: PgPool) {
             "resources",
             "rule_channels",
             "rules",
+            "sessions",
             "silences",
             "traffic_samples",
             "users"

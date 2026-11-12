@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use hm_core::apikey;
-use hm_core::crypto::MasterKey;
+use hm_core::crypto::{Keyring, MasterKey};
 use hm_server::auth::Scope;
 use hm_server::http::{AppState, router};
 use hm_server::repo::{self, OrgId, UserId};
@@ -33,10 +33,13 @@ pub fn state_with_mail(db: PgPool, hcloud_base: &str) -> (AppState, hm_notify::S
     let (notifier, mail) = hm_notify::Notifier::with_stub_mail("hm@hm.test", true).unwrap();
     let state = AppState {
         db,
-        master_key: Arc::new(MasterKey::from_base64(TEST_MASTER_KEY).unwrap()),
+        keyring: Arc::new(Keyring::single(
+            MasterKey::from_base64(TEST_MASTER_KEY).unwrap(),
+        )),
         hcloud: hm_hcloud::Client::with_base_url(hcloud_base).unwrap(),
         notifier,
         base_url: Some(Arc::from("https://hm.test")),
+        login_throttle: Arc::default(),
     };
     (state, mail)
 }
@@ -64,6 +67,108 @@ pub async fn org_with_key(db: &PgPool, name: &str, scope: Scope) -> (Uuid, Strin
         .await
         .unwrap();
     (org, key.full.expose().as_str().to_owned())
+}
+
+/// Adds a user with a password to an existing org. Returns the user id.
+pub async fn user_with_password(
+    db: &PgPool,
+    org: Uuid,
+    email: &str,
+    password: &str,
+    role: &str,
+) -> Uuid {
+    let hash = hm_core::password::hash(password).unwrap();
+    let user: Uuid = sqlx::query_scalar(
+        "INSERT INTO users (email, password_hash) VALUES ($1, $2)
+         ON CONFLICT (email) DO UPDATE SET password_hash = $2 RETURNING id",
+    )
+    .bind(email)
+    .bind(hash)
+    .fetch_one(db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO memberships (org_id, user_id, role) VALUES ($1, $2, $3)")
+        .bind(org)
+        .bind(user)
+        .bind(role)
+        .execute(db)
+        .await
+        .unwrap();
+    user
+}
+
+/// A logged-in browser session: the cookie header value and the CSRF token.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub cookie: String,
+    pub csrf: String,
+}
+
+/// Sends a request with arbitrary headers; returns status, response headers and JSON body.
+pub async fn call_raw(
+    state: &AppState,
+    method: &str,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) -> (StatusCode, axum::http::HeaderMap, Value) {
+    let mut req = Request::builder().method(method).uri(uri);
+    for (k, v) in headers {
+        req = req.header(*k, *v);
+    }
+    let req = match body {
+        Some(body) => req
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string())),
+        None => req.body(Body::empty()),
+    }
+    .unwrap();
+    let response = router(state.clone()).oneshot(req).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
+    (status, headers, value)
+}
+
+/// Logs in and returns the session; panics unless the login succeeds.
+pub async fn login(state: &AppState, email: &str, password: &str) -> Session {
+    let (status, headers, body) = call_raw(
+        state,
+        "POST",
+        "/api/v1/auth/login",
+        &[],
+        Some(json!({ "email": email, "password": password })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let set_cookie = headers["set-cookie"].to_str().unwrap();
+    let cookie = set_cookie.split(';').next().unwrap().to_owned();
+    Session {
+        cookie,
+        csrf: body["csrf_token"].as_str().unwrap().to_owned(),
+    }
+}
+
+/// Sends a request authenticated by `session` (cookie, plus the CSRF header unless `csrf` is false).
+pub async fn call_session(
+    state: &AppState,
+    method: &str,
+    uri: &str,
+    session: &Session,
+    csrf: bool,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    let mut headers = vec![("cookie", session.cookie.as_str())];
+    if csrf {
+        headers.push(("x-csrf-token", session.csrf.as_str()));
+    }
+    let (status, _, body) = call_raw(state, method, uri, &headers, body).await;
+    (status, body)
 }
 
 /// Sends a request to the router. `key` becomes a Bearer header; `body` is sent as JSON.
