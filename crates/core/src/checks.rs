@@ -1026,7 +1026,15 @@ pub fn deprecation(kind: &str, snapshot: &Value, now: i64) -> Outcome {
         .unwrap_or_default();
     let after = unavailable.map_or_else(
         || "no date given".to_owned(),
-        |u| format!("unavailable after {}", date(u)),
+        |u| {
+            // Hetzner: after `unavailable_after` the type can no longer be used for new
+            // resources; existing ones keep running.
+            if u <= now {
+                format!("unavailable for new resources since {}", date(u))
+            } else {
+                format!("unavailable after {}", date(u))
+            }
+        },
     );
     Outcome {
         condition: true,
@@ -1718,6 +1726,19 @@ mod tests {
     fn typed_server(locations: &Value, top: &Value) -> Value {
         json!({ "id": 1, "name": "web-1", "location": { "name": "fsn1" },
                 "server_type": { "name": "cx11", "deprecation": top, "locations": locations } })
+    }
+
+    #[test]
+    fn deprecation_past_the_date_says_since() {
+        let dep = json!({ "announced": "2025-10-16T00:00:00Z", "unavailable_after": "2025-12-31T00:00:00Z" });
+        let snap = json!({ "id": 1, "name": "web-1", "location": { "name": "nbg1" },
+            "server_type": { "name": "cpx21", "deprecation": dep } });
+        let out = deprecation("server", &snap, NOW);
+        assert!(out.condition);
+        assert_eq!(
+            out.message,
+            "server web-1 (1): server type cpx21 is deprecated in nbg1, unavailable for new resources since 2025-12-31 (announced 2025-10-16)"
+        );
     }
 
     #[test]

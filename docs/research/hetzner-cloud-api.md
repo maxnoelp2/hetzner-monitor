@@ -58,7 +58,7 @@ Each LB target carries `health_status` per service.
 | Volume | `status` (available, creating), `server` (nullable), `size` (GB), `protection.delete` | orphans, cost |
 | Floating IP | `type`, `server` (nullable), `home_location.name`, `protection.delete` | orphans, cost |
 | Primary IP | `type`, `assignee_id` (nullable), `assignee_type`, `location.name`, `protection.delete` | orphans, cost |
-| `/pricing` (not paginated) | `currency`, `vat_rate`, `server_types[]`/`load_balancer_types[]`.`prices[]` per location, `volume.price_per_gb_month`, `primary_ips[]`/`floating_ips[]` per type + location, `server_backup.percentage`; prices are decimal strings `{net, gross}` (verified 2026-11-12) | cost estimate |
+| `/pricing` (not paginated) | `currency`, `vat_rate`, `server_types[]`/`load_balancer_types[]`.`prices[]` per location, `volume.price_per_gb_month`, `primary_ips[]`/`floating_ips[]` per type + location (real response: `primary_ips` only `ipv4` — primary IPv6 is free; `floating_ips` both, plus a legacy `floating_ip`), `server_backup.percentage`; prices are decimal strings `{net, gross}` (verified 2026-11-12) | cost estimate |
 
 Project-wide action listing (`GET /actions` without IDs) was **removed on 2025-01-30** → detect changes by inventory diff.
 

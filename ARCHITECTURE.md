@@ -6,7 +6,7 @@ invariants must hold. Details live in [docs/design/](docs/README.md#design); the
 
 > Status: **M3** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
-> forecast (M3b) are implemented. Not yet: notifier and channels (M4).
+> forecast (M3b) are done. Not yet: notifier and channels (M4).
 > Everything else below is the target design.
 
 ## Bird's-eye view

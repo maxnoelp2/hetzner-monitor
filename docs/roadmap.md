@@ -19,7 +19,7 @@ link the execution plan in `docs/plans/` that delivered them.
 - [x] CPU metric is per vCPU (100 = one full core) — stated explicitly in the spec (2026-11-11); real data on a 3-vCPU server normalised as expected in the M3a smoke test (2026-11-12).
 - [x] Traffic billing period — not exposed by the API. Billing FAQ (2026-11-11): only outgoing traffic, invoices per calendar month; the counter reset date is **not** documented → the M3b forecast is a labelled calendar-month estimate (decided 2026-11-12).
 
-## M3 — implemented (M3b real check pending)
+## M3 — done
 
 - M3a ([plan](plans/2026-11-11-m3a-metrics-tier.md)):
   - [x] Metrics tier (adaptive interval, only servers in scope of metric rules), series evaluation without local storage
@@ -30,7 +30,7 @@ link the execution plan in `docs/plans/` that delivered them.
   - [x] Inventory checks on inventory cycles over all six kinds: `certificate_expiry`, `deprecation`, `hygiene_backups`, `hygiene_protection`, `hygiene_orphans`
   - [x] `cost_change` with the cost estimate from `/pricing` × inventory (shown on `GET /projects/{id}`)
   - [x] `traffic_quota` forecast (calendar-month estimate) from daily traffic samples; derived daily snapshots per ADR-0011
-  - [ ] Read-only real check (`scripts/smoke-m3b.sh`) by the owner
+  - [x] Read-only real check (`scripts/smoke-m3b.sh`): deprecation and hygiene findings on the real project, cost estimate with every resource priced (2026-11-12)
 
 ## M2 — done ([plan](plans/2026-11-11-m2-scheduler-rules-alerts.md))
 

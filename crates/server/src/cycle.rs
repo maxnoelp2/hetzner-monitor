@@ -320,6 +320,9 @@ async fn record_snapshots(
         pricing,
         resources.iter().map(|r| (r.kind.as_str(), &r.snapshot.0)),
     );
+    if !estimate.unpriced.is_empty() {
+        tracing::info!(%project_id, unpriced = ?estimate.unpriced, "cost estimate leaves resources without a price");
+    }
     repo::snapshots::upsert_cost(conn, org, project_id, now, &estimate).await?;
     let samples: Vec<(Uuid, i64)> = resources
         .iter()

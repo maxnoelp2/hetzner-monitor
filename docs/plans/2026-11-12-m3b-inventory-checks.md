@@ -1,6 +1,6 @@
 # Plan: M3b — inventory, hygiene and cost checks, traffic forecast
 
-- Status: In progress
+- Status: Done ([PR #10](https://github.com/maxnoelp2/hetzner-monitor/pull/10))
 - Milestone: M3 (part b of two; part a = [metrics tier](2026-11-11-m3a-metrics-tier.md))
 - Owner: Claude (agent), reviewed by Max Nölp
 - Started: 2026-11-12
@@ -40,7 +40,7 @@ and `traffic_quota` gets a clearly labelled calendar-month **forecast**. Nothing
 - [x] Tests: unit tests per check and for the cost estimate / forecast maths (fixtures hand-written from the spec,
       anonymised); integration tests (wiremock, synthetic clock) for inventory-only evaluation, cost change across a
       day boundary, forecast across two days, and that fast cycles don't touch inventory alerts.
-- [ ] **Real read-only check** (`scripts/smoke-m3b.sh`): manual sync on the owner's real project, list the new alerts per
+- [x] **Real read-only check** (`scripts/smoke-m3b.sh`): manual sync on the owner's real project, list the new alerts per
       check and the cost estimate; the owner compares the estimate with the Hetzner Console. Nothing is changed in Hetzner.
 - [x] fmt, clippy `--locked -D warnings`, tests green; docs updated (checks, scheduler, alerting, data-model, api,
       research, roadmap, ARCHITECTURE status + invariant 8 wording, CLAUDE.md status); ADR-0011.
@@ -128,7 +128,7 @@ the rule. Re-notify behaviour for `info` is decided in M4 (proposal noted there:
        cycle's transaction; engine evaluates inventory checks (all kinds) on inventory cycles; project view shows `cost_estimate`.
 7. [x] **Tests**: integration scenarios (see acceptance criteria); existing tests adjusted (`fixed_h`, default rule list, `/pricing` mock).
 8. [x] **Docs + ADR-0011**, `scripts/smoke-m3b.sh` (read-only, macOS Python 3.9).
-9. [ ] **Verify**: criteria, open PR, offer the owner's read-only real check, record the result.
+9. [x] **Verify**: criteria, open PR, offer the owner's read-only real check, record the result.
 
 ## Dependencies (new crates)
 
@@ -161,3 +161,12 @@ None.
   `engine::evaluate` were split into helpers (`fetch`, `evaluate_cost`, `evaluate_metrics`) to stay under clippy's
   100-line limit. Tests: 69 core, 10 hcloud (+1 ignored live), 4 new integration scenarios in `tests/inventory_checks.rs`,
   existing scenarios adjusted (`fixed_h` + `/pricing`, default rule list, migration table list).
+- 2026-11-12 — Read-only real check on the owner's project (`scripts/smoke-m3b.sh`, temporary project, disconnected
+  again): 9 servers. `deprecation` fired for 4 servers (cpx11/cpx21/cpx31, deprecated 2025-10-16); `hygiene_backups`
+  pending for 5 and `hygiene_protection` for 9 servers, matching the real backup flags; no certificates, orphans,
+  `cost_change` or forecast (expected on day one). Budget 88 of 1800 requests/h. Two fixes from the run: (1) the first
+  estimate left 8 resources unpriced — a read-only diagnosis (`scripts/diag-pricing.py`) showed they were the primary
+  IPv6s: the real `/pricing` lists only `ipv4` under `primary_ips` (primary IPv6 is free), so an unlisted `ipv6` now counts
+  as 0 and unpriced labels are logged; (2) past `unavailable_after` dates now read "unavailable for new resources since".
+  Second run: estimate 81.00 EUR net with nothing unpriced. The smoke script also checks the M3b rule only after connect
+  (default rules are per project) and reads missing keys from `deploy/.env`.

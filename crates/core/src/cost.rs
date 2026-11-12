@@ -38,7 +38,8 @@ pub fn estimate<'a>(
                 "load_balancer_type",
             ),
             "volume" => volume_price(pricing, snapshot),
-            "primary_ip" => ip_price(pricing, snapshot, "primary_ips", "/location/name"),
+            "primary_ip" => ip_price(pricing, snapshot, "primary_ips", "/location/name")
+                .or_else(|| free_primary_ipv6(pricing, snapshot)),
             "floating_ip" => ip_price(pricing, snapshot, "floating_ips", "/home_location/name")
                 .or_else(|| net(pricing.pointer("/floating_ip/price_monthly"))),
             _ => continue,
@@ -129,6 +130,23 @@ fn ip_price(pricing: &Value, snapshot: &Value, collection: &str, location: &str)
         .iter()
         .find(|t| t.get("type").and_then(Value::as_str) == Some(ip_type))?;
     monthly_at(entry.get("prices"), location)
+}
+
+/// Primary IPv6 is free at Hetzner, and the real `/pricing` lists only `ipv4` under
+/// `primary_ips` (seen 2026-11-12). An IPv6 primary IP counts as 0 when `/pricing` has no
+/// `ipv6` entry at all; an entry without the IP's location still leaves it unpriced.
+fn free_primary_ipv6(pricing: &Value, snapshot: &Value) -> Option<f64> {
+    if snapshot.get("type").and_then(Value::as_str) != Some("ipv6") {
+        return None;
+    }
+    let listed = pricing
+        .get("primary_ips")
+        .and_then(Value::as_array)
+        .is_some_and(|e| {
+            e.iter()
+                .any(|t| t.get("type").and_then(Value::as_str) == Some("ipv6"))
+        });
+    (!listed).then_some(0.0)
 }
 
 fn label(kind: &str, snapshot: &Value) -> String {
@@ -227,6 +245,23 @@ mod tests {
         let est = estimate(&pricing(), resources.iter().map(|(k, v)| (*k, v)));
         assert!(est.monthly_net.abs() < f64::EPSILON);
         assert_eq!(est.unpriced, ["server web-1 (1)", "primary ip 5"]);
+    }
+
+    #[test]
+    fn primary_ipv6_is_free_when_pricing_does_not_list_it() {
+        // The real `/pricing` (2026-11-12) has only `ipv4` under `primary_ips`.
+        let mut pricing = pricing();
+        pricing["primary_ips"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|e| e["type"] == "ipv4");
+        let v6 = json!({ "id": 6, "type": "ipv6", "location": { "name": "nbg1" } });
+        let est = estimate(&pricing, [("primary_ip", &v6)]);
+        assert!(est.monthly_net.abs() < f64::EPSILON);
+        assert_eq!(est.unpriced, Vec::<String>::new());
+        // Listed, but not for this location: still unpriced, not guessed.
+        let est = estimate(&self::pricing(), [("primary_ip", &v6)]);
+        assert_eq!(est.unpriced, ["primary ip 6"]);
     }
 
     #[test]
