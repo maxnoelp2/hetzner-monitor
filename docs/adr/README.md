@@ -23,4 +23,4 @@ Short documents that record *why* a significant decision was made. Format: [temp
 | [0008](0008-agpl-and-open-core.md) | AGPL-3.0, all features open source | Accepted |
 | [0009](0009-frontend-react-tauri.md) | React PWA, packaged with Tauri 2 for desktop and mobile | Accepted |
 | [0010](0010-polling-tiers-and-budget.md) | Three polling tiers with an adaptive rate-limit budget | Accepted |
-| [0011](0011-derived-daily-snapshots.md) | Derived daily snapshots for cost and the traffic forecast | Proposed |
+| [0011](0011-derived-daily-snapshots.md) | Derived daily snapshots for cost and the traffic forecast | Accepted |
