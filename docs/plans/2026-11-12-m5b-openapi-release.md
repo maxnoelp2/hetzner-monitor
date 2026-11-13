@@ -1,6 +1,6 @@
 # Plan: M5b — OpenAPI, self-hosting guide, release v0.1.0
 
-- Status: Done (owner real check deferred to the web UI; `v0.1.0` tag pending)
+- Status: Done (v0.1.0 released 2026-11-13; owner real check deferred to the web UI)
 - Milestone: M5 (second half; M5a is [its own plan](2026-11-12-m5a-auth-sessions-rotation.md))
 - Owner: agent (Claude), reviewed by the maintainer
 - Started: 2026-11-12
@@ -172,3 +172,6 @@ PWA and external tools can render the JSON).
   so a second install on the same host shares containers with the first unless started with `-p <name>` — the first
   test run replaced the owner's dev containers (Postgres kept its volume and refused the new password, so no data
   changed; restored at once). README now says so.
+- 2026-11-13 — PR #13 merged; CI on `main` green. At the owner's explicit request the agent pushed the annotated tag
+  `v0.1.0` (an exception to ADR-0014's "agents never push tags"). The release workflow passed on its first run (verify,
+  native amd64/arm64 builds, manifest merge, GitHub release); `0.1.0`, `0.1` and `latest` pull anonymously from GHCR.
