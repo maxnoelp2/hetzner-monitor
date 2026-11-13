@@ -205,6 +205,7 @@ Add a new key next to the old one (`HM_MASTER_KEYS=1:<old>,2:<new>` instead of `
 | `password authentication failed` in the logs | `.env` was created after the first start. Fresh install: `docker compose down -v` (**deletes all data**) and start again. |
 | `bootstrap`: "already bootstrapped" | It only runs once; use `users reset-password` for a new password and the API (`POST /api-keys`) for more keys. |
 | Login works with curl but not in the browser | HTTP without `HM_BASE_URL=http://…` — use HTTPS (reverse proxy) instead. |
+| A second installation on the same host replaces the first one's containers | The Compose project is named `hetzner-monitor`. Run the other one with its own name and ports: `docker compose -p hm-staging up -d`, with different `HM_PORT` and `HM_POSTGRES_PORT` in its `.env`, and pass `-p hm-staging` to every later `docker compose` command. |
 | Project status `invalid_token` | Hetzner no longer accepts the token (deleted or expired). Tokens cannot be replaced yet: delete the project (`DELETE /projects/{id}`, removes its alerts) and connect it again with a new read-only token. |
 
 ## API

@@ -11,10 +11,10 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M3** | Metric checks (`cpu`, `network`, `disk_io`), Hetzner-specific, hygiene, cost | CPU load via `stress` → alert after the rule duration |
 | **M4** | Channels (email, Slack, Discord, webhook, ntfy), notifier queue, silences, ack | Every channel verified via `POST /channels/{id}/test` |
 | **M5** | Hardening: key rotation, login + sessions, OpenAPI, docs, release v0.1.0 (image on GHCR) | Self-hostable from the README alone |
-| **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone |
+| **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone; a fresh install from the README works end to end (includes the M5 check the owner deferred) |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
-## M5 — in progress (M5a done, M5b implemented)
+## M5 — done (release tag pending)
 
 - M5a ([plan](plans/2026-11-12-m5a-auth-sessions-rotation.md), [ADR-0013](adr/0013-sessions-csrf-and-key-rotation.md)):
   - [x] Password login (Argon2id), server-side sessions (`hm_session` cookie), derived CSRF token, `/me`, `PUT /me/password`, login throttling
@@ -25,7 +25,7 @@ link the execution plan in `docs/plans/` that delivered them.
   - [x] OpenAPI 3.1 generated with `utoipa` at `/api/v1/openapi.json` and `hetzner-monitor openapi`; tests keep it complete; Redocly lint in CI
   - [x] README self-hosting guide; Compose on the GHCR image (`HM_VERSION`), build override for development
   - [x] Release workflow (tag `v*` → native amd64/arm64 builds → GHCR manifest → GitHub release), `CHANGELOG.md`, version 0.1.0
-  - [ ] Real check: fresh install following only the README (owner, test project)
+  - [ ] Real check: fresh install following only the README (owner, test project) — deferred by owner decision (2026-11-13) until the web UI is complete; README steps 2–5 checked by the agent
   - [ ] Release v0.1.0 tagged by the owner, image public on GHCR
 
 ## M4 — done ([plan](plans/2026-11-12-m4-notifications.md))

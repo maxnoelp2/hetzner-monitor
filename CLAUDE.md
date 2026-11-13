@@ -26,7 +26,7 @@ SSRF guard), durable `notification_jobs` queue filled in the alert transaction a
 by `min_severity` or pinned rule channels, re-notify, `POST /alerts/{id}/ack`, silences, `/channels` incl. `/test`.
 **M5a** (login, sessions, rotation): `POST /auth/login` → `hm_session` cookie (SHA-256 stored, CSRF header derived from
 the token), `/me`, `PUT /me/password`, login throttling, Argon2id; `HM_MASTER_KEYS` + `keys status|rotate`, startup key check
-(ADR-0013). **M5b**: OpenAPI 3.1 from code (`utoipa`, `/api/v1/openapi.json`, `hetzner-monitor openapi`), README
+(ADR-0013). **M5b done** (README real check deferred by owner until the web UI; the owner tags v0.1.0): OpenAPI 3.1 from code (`utoipa`, `/api/v1/openapi.json`, `hetzner-monitor openapi`), README
 self-hosting guide, Compose on the GHCR image, release workflow on `v*` tags, `CHANGELOG.md`, version 0.1.0 (ADR-0014).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
