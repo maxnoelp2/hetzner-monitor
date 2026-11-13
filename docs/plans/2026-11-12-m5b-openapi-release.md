@@ -1,10 +1,10 @@
 # Plan: M5b — OpenAPI, self-hosting guide, release v0.1.0
 
-- Status: In progress
+- Status: Done (owner real check deferred to the web UI; `v0.1.0` tag pending)
 - Milestone: M5 (second half; M5a is [its own plan](2026-11-12-m5a-auth-sessions-rotation.md))
 - Owner: agent (Claude), reviewed by the maintainer
 - Started: 2026-11-12
-- PR: <link once opened>
+- PR: https://github.com/maxnoelp2/hetzner-monitor/pull/13
 
 ## Goal
 
@@ -14,38 +14,39 @@ the code and cannot drift from the router.
 
 ## Acceptance criteria
 
-- [ ] `GET /api/v1/openapi.json` (unauthenticated) returns an OpenAPI **3.1** document generated from the code with
+- [x] `GET /api/v1/openapi.json` (unauthenticated) returns an OpenAPI **3.1** document generated from the code with
       `utoipa` 6 + `utoipa-axum` 0.3. It lists every route of the router (`/api/v1/*`, `/healthz`, `/readyz`), with request
       bodies, query/path parameters, typed success responses and the error responses each handler can return.
-- [ ] Security schemes: `api_key` (HTTP Bearer, `hm_…`), `session` (API key in cookie `hm_session`) and `csrf` (API key in
+- [x] Security schemes: `api_key` (HTTP Bearer, `hm_…`), `session` (API key in cookie `hm_session`) and `csrf` (API key in
       header `X-CSRF-Token`). Read operations accept `api_key` **or** `session`; state-changing operations accept `api_key`
       **or** `session` + `csrf`; `POST /auth/login`, `/healthz`, `/readyz` and the spec itself need none. The required
       scope (`read`/`write`/`admin`) is stated per operation.
-- [ ] Shared `Error` schema `{error: {code, message}}`; `code` documented as the list of implemented codes.
-- [ ] Every operation has a unique, stable `operationId` (`listProjects`, `createChannel`, …) — needed by client generators.
-- [ ] `hetzner-monitor openapi` prints the same document (no database, no keys), so clients and CI can use it offline.
-- [ ] Tests: the document is valid JSON, `openapi` is `3.1.x`, every `$ref` resolves, operationIds are unique; every
+- [x] Shared `Error` schema `{error: {code, message}}`; `code` documented as the list of implemented codes.
+- [x] Every operation has a unique, stable `operationId` (`listProjects`, `createChannel`, …) — needed by client generators.
+- [x] `hetzner-monitor openapi` prints the same document (no database, no keys), so clients and CI can use it offline.
+- [x] Tests: the document is valid JSON, `openapi` is `3.1.x`, every `$ref` resolves, operationIds are unique; every
       operation in the document is answered by the real router (not 404/405); the API router is built only through
       `utoipa-axum` (a guard test fails if a plain `.route(` appears in `crates/server/src/api/`), so a new route cannot
       be added without appearing in the document. CI additionally lints the document with Redocly CLI (pinned).
-- [ ] Handler responses are typed structs (`Serialize` + `ToSchema`) instead of `json!` values, so the schema is derived
+- [x] Handler responses are typed structs (`Serialize` + `ToSchema`) instead of `json!` values, so the schema is derived
       from exactly what is serialised. The JSON on the wire stays **byte-compatible** (existing integration tests unchanged).
-- [ ] README: a self-hosting guide that works on its own — prerequisites, getting the compose file, `.env` with generated
+- [x] README: a self-hosting guide that works on its own — prerequisites, getting the compose file, `.env` with generated
       master key and Postgres password, `docker compose up -d`, `bootstrap` → admin API key + initial password, logging in,
       connecting a project with a **read-only** token, first channel + test, upgrading, backups (database **and** master
       key), pointer to key rotation, reverse proxy with `HM_BASE_URL` and the `Secure` cookie, troubleshooting.
-- [ ] `deploy/docker-compose.yml` uses `ghcr.io/maxnoelp2/hetzner-monitor:${HM_VERSION:-0.1.0}`; the build-from-source
+- [x] `deploy/docker-compose.yml` uses `ghcr.io/maxnoelp2/hetzner-monitor:${HM_VERSION:-0.1.0}`; the build-from-source
       variant moves to an override file `deploy/docker-compose.build.yml` for development.
-- [ ] Release workflow on tag `v*`: checks that the tag equals the workspace version, builds linux/amd64 and linux/arm64
+- [x] Release workflow on tag `v*`: checks that the tag equals the workspace version, builds linux/amd64 and linux/arm64
       **natively** (`ubuntu-latest` + `ubuntu-24.04-arm`, no QEMU), pushes by digest, merges one multi-arch manifest to
       `ghcr.io/maxnoelp2/hetzner-monitor` with tags `0.1.0`, `0.1`, `latest`, and creates the GitHub release with the
       matching `CHANGELOG.md` section. Least-privilege `permissions` per job (`packages: write` only where pushing).
-- [ ] Workspace version `0.1.0`; `CHANGELOG.md` (Keep a Changelog) with the 0.1.0 entry; `hetzner-monitor --version` and the
+- [x] Workspace version `0.1.0`; `CHANGELOG.md` (Keep a Changelog) with the 0.1.0 entry; `hetzner-monitor --version` and the
       spec's `info.version` show it.
-- [ ] Docs updated: `docs/design/api.md` (spec, auth schemes), `docs/design/configuration.md` (`HM_VERSION` for compose),
+- [x] Docs updated: `docs/design/api.md` (spec, auth schemes), `docs/design/configuration.md` (`HM_VERSION` for compose),
       `CLAUDE.md` (commands, status), `ARCHITECTURE.md` status, roadmap, ADR-0014 (release & versioning), this plan.
 - [ ] Real check by the owner: a fresh install following only the README, in a throwaway directory with a throwaway
-      Compose project name and ports, against a **test** Hetzner project (never the production servers).
+      Compose project name and ports, against a **test** Hetzner project (never the production servers). — Deferred by owner decision (2026-11-13): tested
+      together with the web UI; README steps 2–5 were walked through by the agent (progress log).
 
 ## Context
 
@@ -118,7 +119,7 @@ PWA and external tools can render the JSON).
        `X.Y.Z` / `X.Y` / `latest`, pre-1.0 compatibility promise (DB migrations forward-only, API under `/api/v1` may
        still change in minor releases and is listed in the CHANGELOG), compose pins an exact version.
 11. [x] Docs (`api.md`, `configuration.md`, `CLAUDE.md`, `ARCHITECTURE.md`, roadmap), fmt + clippy + `cargo test --all`, PR.
-12. [ ] Owner: real check from the README; after merge, the owner tags `v0.1.0`, the workflow publishes; the owner sets the
+12. [ ] (deferred, see progress log) Owner: real check from the README; after merge, the owner tags `v0.1.0`, the workflow publishes; the owner sets the
        GHCR package to **public** once (new packages are private by default) and pulls it anonymously.
 
 ## Out of scope
@@ -163,3 +164,11 @@ PWA and external tools can render the JSON).
   - Dev commands now need `-f deploy/docker-compose.build.yml`; `deploy/docker-compose.yml` alone pulls the release.
   - `deploy/.env.example` could not be read or edited by the agent (permission rule for `.env*`); `HM_VERSION` is
     documented in configuration.md and the README instead.
+- 2026-11-13 — CI green on the PR (5 checks). Local image build of this branch works (`openapi` prints 3.1.0,
+  `info.version` 0.1.0). The agent walked through README steps 2–5 in a throwaway directory with the image tagged
+  `ghcr.io/maxnoelp2/hetzner-monitor:0.1.0` locally: start, `/readyz`, `bootstrap` (second run refused), `/me`, login with
+  cookie, POST without CSRF → 403, password change → 204. Steps 6–7 (test token, channel test) not done: the owner
+  deferred the real check until the web UI is complete. Finding: the Compose file names the project `hetzner-monitor`,
+  so a second install on the same host shares containers with the first unless started with `-p <name>` — the first
+  test run replaced the owner's dev containers (Postgres kept its volume and refused the new password, so no data
+  changed; restored at once). README now says so.
