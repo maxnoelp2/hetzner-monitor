@@ -23,4 +23,4 @@ refactor). It lets a human or an agent pick up work mid-way without re-deriving 
 | [2026-11-12 — M4 notifications, silences & ack](2026-11-12-m4-notifications.md) | Done |
 | [2026-11-12 — M5a login, sessions & key rotation](2026-11-12-m5a-auth-sessions-rotation.md) | Done |
 | [2026-11-12 — M5b OpenAPI, self-hosting guide & release v0.1.0](2026-11-12-m5b-openapi-release.md) | Done |
-| [2026-11-13 — M6 React PWA & Web Push](2026-11-13-m6-pwa-web-push.md) | Draft |
+| [2026-11-13 — M6 React PWA & Web Push](2026-11-13-m6-pwa-web-push.md) | In progress (M6a) |

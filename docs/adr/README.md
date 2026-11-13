@@ -27,3 +27,5 @@ Short documents that record *why* a significant decision was made. Format: [temp
 | [0012](0012-notification-delivery.md) | Deliver notifications at-least-once from a Postgres queue | Accepted |
 | [0013](0013-sessions-csrf-and-key-rotation.md) | Session cookie details, derived CSRF token, login throttling and master-key rotation | Proposed |
 | [0014](0014-release-and-versioning.md) | Releases: SemVer tags, multi-arch image on GHCR, pinned Compose version | Proposed |
+| [0015](0015-web-ui-embedded-in-binary.md) | Embed the web UI in the binary and serve it on the API's origin | Proposed |
+| [0016](0016-frontend-tooling.md) | Frontend tooling for the PWA | Proposed |
