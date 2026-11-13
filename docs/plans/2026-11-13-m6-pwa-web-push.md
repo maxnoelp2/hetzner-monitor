@@ -1,6 +1,6 @@
 # Plan: M6 — React PWA with Web Push
 
-- Status: Draft
+- Status: In progress (M6a)
 - Milestone: M6 (split into **M6a** web UI and **M6b** Web Push, like M5)
 - Owner: agent (Claude), reviewed by the maintainer
 - Started: 2026-11-13
@@ -174,3 +174,6 @@ charts.
 ## Progress log
 
 - 2026-11-13 — Plan drafted after reading the docs, ADRs, the notify/server code and the owner's design system.
+- 2026-11-13 — Owner approved the plan without changes. Open questions answered by the plan's defaults until the owner
+  says otherwise: design system re-implemented in `web/` without the logo or a link to it; UI copy in English; the
+  HTTPS setup for the phone is decided before the M6b real check. M6a started on branch `feat/m6a-web-ui`.
