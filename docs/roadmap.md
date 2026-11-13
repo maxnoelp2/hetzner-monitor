@@ -14,7 +14,7 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone; a fresh install from the README works end to end (includes the M5 check the owner deferred) |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
-## M5 — done (release tag pending)
+## M5 — done (v0.1.0 released 2026-11-13)
 
 - M5a ([plan](plans/2026-11-12-m5a-auth-sessions-rotation.md), [ADR-0013](adr/0013-sessions-csrf-and-key-rotation.md)):
   - [x] Password login (Argon2id), server-side sessions (`hm_session` cookie), derived CSRF token, `/me`, `PUT /me/password`, login throttling
@@ -26,7 +26,7 @@ link the execution plan in `docs/plans/` that delivered them.
   - [x] README self-hosting guide; Compose on the GHCR image (`HM_VERSION`), build override for development
   - [x] Release workflow (tag `v*` → native amd64/arm64 builds → GHCR manifest → GitHub release), `CHANGELOG.md`, version 0.1.0
   - [ ] Real check: fresh install following only the README (owner, test project) — deferred by owner decision (2026-11-13) until the web UI is complete; README steps 2–5 checked by the agent
-  - [ ] Release v0.1.0 tagged by the owner, image public on GHCR
+  - [x] Release v0.1.0 tagged (2026-11-13), multi-arch image public on GHCR (anonymous pull verified)
 
 ## M4 — done ([plan](plans/2026-11-12-m4-notifications.md))
 
