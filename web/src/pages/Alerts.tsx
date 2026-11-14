@@ -516,7 +516,10 @@ export function AlertDetailPage() {
                   const type = eventTypes.get(n.alert_event_id);
                   return (
                     <tr key={n.id}>
-                      <td className="strong">{n.channel_name}</td>
+                      <td className="strong">
+                        {n.channel_name}
+                        {n.device && <span className="muted"> · {n.device}</span>}
+                      </td>
                       <td className="hide-mobile">{type ? EVENT_LABELS[type] : "—"}</td>
                       <td>
                         <Badge tone={JOB_TONES[n.status]} dot>

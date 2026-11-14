@@ -176,7 +176,9 @@ export interface paths {
         put?: never;
         /**
          * Send a test notification now (also to disabled channels). Scope: `write`.
-         * @description Delivery failures are reported in the body with status 200.
+         * @description Delivery failures are reported in the body with status 200. A `web_push` channel sends to
+         *     every targeted device and reports each in `devices`; a device the push service reports gone
+         *     is removed.
          */
         post: operations["testChannel"];
         delete?: never;
@@ -306,6 +308,83 @@ export interface paths {
         put?: never;
         /** Re-sync the inventory now (any project status). Scope: `write`. */
         post: operations["syncProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Web Push availability and the VAPID public key. Scope: `read`. */
+        get: operations["getPushConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's subscribed devices in this organisation. Scope: `read`. */
+        get: operations["listPushSubscriptions"];
+        put?: never;
+        /**
+         * Subscribe this device. Scope: `write`.
+         * @description Idempotent per endpoint: registering a known endpoint again replaces its keys and name (and
+         *     moves it to the caller, if another member of the organisation had registered it) and
+         *     answers 200.
+         */
+        post: operations["createPushSubscription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unsubscribe one of the caller's devices. Scope: `write`. */
+        delete: operations["deletePushSubscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/push/subscriptions/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a test push to one of the caller's devices. Scope: `write`.
+         * @description Delivery failures are reported in the body with status 200.
+         */
+        post: operations["testPushSubscription"];
         delete?: never;
         options?: never;
         head?: never;
@@ -524,7 +603,7 @@ export interface components {
             new_password: string;
         };
         /** @description Write-only channel configuration; the shape depends on `type`. Sealed at rest, never returned. */
-        ChannelConfig: components["schemas"]["EmailConfig"] | components["schemas"]["UrlConfig"] | components["schemas"]["WebhookConfig"] | components["schemas"]["NtfyConfig"];
+        ChannelConfig: components["schemas"]["EmailConfig"] | components["schemas"]["UrlConfig"] | components["schemas"]["WebhookConfig"] | components["schemas"]["NtfyConfig"] | components["schemas"]["WebPushConfig"];
         ChannelEnvelope: {
             channel: components["schemas"]["ChannelView"];
         };
@@ -532,7 +611,7 @@ export interface components {
             channels: components["schemas"]["ChannelView"][];
         };
         /** @enum {string} */
-        ChannelType: "email" | "slack" | "discord" | "webhook" | "ntfy";
+        ChannelType: "email" | "slack" | "discord" | "webhook" | "ntfy" | "web_push";
         /** @description A channel as shown in the API. No secret material. */
         ChannelView: {
             /** Format: date-time */
@@ -589,6 +668,19 @@ export interface components {
             /** @description A **read-only** Hetzner Cloud API token of the project. Write-only: never returned. */
             token: string;
         };
+        /** @description `PushSubscription.toJSON()` plus a device name. Write-only: sealed, never returned. */
+        CreatePushSubscription: {
+            /** @description The push service URL (`https://`). A secret: whoever knows it can push to the device. */
+            endpoint: string;
+            /**
+             * Format: double
+             * @description Ignored (part of `PushSubscription.toJSON()`).
+             */
+            expirationTime?: number | null;
+            keys: components["schemas"]["SubscriptionKeys"];
+            /** @description 1–100 characters, e.g. "iPhone · Safari". Default "Device". */
+            name?: string | null;
+        };
         /** @description `POST /rules`: a custom rule. Required: `name`, `check_type`, `severity`; `params` default `{}`. */
         CreateRule: {
             /** @description Any check type except `hetzner_api`. */
@@ -636,6 +728,17 @@ export interface components {
              */
             starts_at?: string | null;
         };
+        /** @description A `web_push` test result for one device. */
+        DeviceResult: {
+            error?: string | null;
+            /**
+             * Format: uuid
+             * @description Push subscription id.
+             */
+            id: string;
+            name: string;
+            ok: boolean;
+        };
         /** @description `email`. */
         EmailConfig: {
             /** @description Recipient addresses. */
@@ -649,7 +752,7 @@ export interface components {
          * @description Implemented error codes.
          * @enum {string}
          */
-        ErrorCode: "unauthorized" | "invalid_credentials" | "forbidden" | "csrf_failed" | "wrong_password" | "too_many_attempts" | "not_found" | "bad_request" | "name_taken" | "sync_in_progress" | "default_rule" | "alert_resolved" | "invalid_token" | "email_disabled" | "hetzner_invalid_token" | "hetzner_unavailable" | "hetzner_rate_limited" | "internal";
+        ErrorCode: "unauthorized" | "invalid_credentials" | "forbidden" | "csrf_failed" | "wrong_password" | "too_many_attempts" | "not_found" | "bad_request" | "name_taken" | "sync_in_progress" | "default_rule" | "alert_resolved" | "invalid_token" | "email_disabled" | "push_disabled" | "hetzner_invalid_token" | "hetzner_unavailable" | "hetzner_rate_limited" | "internal";
         ErrorDetail: {
             code: components["schemas"]["ErrorCode"];
             /** @description Human-readable; never contains secrets. */
@@ -685,6 +788,8 @@ export interface components {
             /** Format: uuid */
             channel_id: string;
             channel_name: string;
+            /** @description `web_push`: the device (push subscription) name, also after it was removed. */
+            device: string | null;
             /** Format: date-time */
             finished_at: string | null;
             /** Format: int64 */
@@ -823,6 +928,41 @@ export interface components {
             status_message: string | null;
             token_hint: string;
         };
+        /** @description Whether Web Push is available, and the key browsers subscribe with. */
+        PushConfig: {
+            enabled: boolean;
+            /**
+             * @description VAPID public key (uncompressed P-256 point, base64url): `applicationServerKey` for
+             *     `PushManager.subscribe()`. Absent when push is disabled.
+             */
+            vapid_public_key?: string | null;
+        };
+        PushSubscriptionEnvelope: {
+            subscription: components["schemas"]["PushSubscriptionView"];
+        };
+        PushSubscriptionList: {
+            subscriptions: components["schemas"]["PushSubscriptionView"][];
+        };
+        /** @description A subscription as shown in the API: no endpoint, no keys. */
+        PushSubscriptionView: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description The push service's host (`fcm.googleapis.com`, `web.push.apple.com`, …). */
+            host: string;
+            /** Format: uuid */
+            id: string;
+            /** @description The device name given when subscribing. */
+            name: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description Result of a test push. Errors are short and redacted. */
+        PushTestResult: {
+            error?: string | null;
+            /** @description The push service reported the subscription gone; it was removed. */
+            gone?: boolean;
+            ok: boolean;
+        };
         /** @enum {string} */
         ResourceKind: "server" | "load_balancer" | "volume" | "certificate" | "floating_ip" | "primary_ip";
         ResourceList: {
@@ -915,6 +1055,13 @@ export interface components {
             /** Format: date-time */
             starts_at: string;
         };
+        /** @description The keys of a browser push subscription (`PushSubscription.toJSON().keys`). */
+        SubscriptionKeys: {
+            /** @description 16-byte authentication secret, base64url. */
+            auth: string;
+            /** @description P-256 public key, base64url. */
+            p256dh: string;
+        };
         /** @description Resources seen in an inventory cycle, per kind (`server`, `load_balancer`, …). */
         SyncReport: {
             [key: string]: {
@@ -928,6 +1075,8 @@ export interface components {
         };
         /** @description Result of a test notification. Errors are short and redacted (`HTTP 404`, `timeout`, …). */
         TestResult: {
+            /** @description `web_push`: the result per targeted device. `ok` is true if every device got it. */
+            devices?: components["schemas"]["DeviceResult"][] | null;
             error?: string | null;
             ok: boolean;
             /** @description Whether the notifier would retry this failure. */
@@ -961,6 +1110,14 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        /**
+         * @description `web_push`: sends to the push subscriptions (devices) of these users; omit `users` for every
+         *     member of the organisation. Users subscribe their devices with `POST /push/subscriptions`.
+         */
+        WebPushConfig: {
+            /** @description 1–100 user ids of members of the organisation. */
+            users?: string[] | null;
         };
         /** @description `webhook`: requests are signed with `secret` (docs/design/notifications.md). */
         WebhookConfig: {
@@ -1341,7 +1498,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description Email without SMTP settings (`email_disabled`) */
+            /** @description Email without SMTP settings (`email_disabled`), Web Push without a VAPID subject (`push_disabled`) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1472,7 +1629,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description Email without SMTP settings (`email_disabled`) */
+            /** @description Email without SMTP settings (`email_disabled`), Web Push without a VAPID subject (`push_disabled`) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -1857,6 +2014,178 @@ export interface operations {
             };
             /** @description Hetzner rate limit (`hetzner_rate_limited`) */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getPushConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushConfig"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listPushSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscriptionList"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    createPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePushSubscription"];
+            };
+        };
+        responses: {
+            /** @description Known endpoint, updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscriptionEnvelope"];
+                };
+            };
+            /** @description Subscribed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushSubscriptionEnvelope"];
+                };
+            };
+            /** @description Invalid subscription (`bad_request`) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Web Push not configured (`push_disabled`) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    deletePushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Push subscription id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Unknown subscription (`not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    testPushSubscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Push subscription id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushTestResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Unknown subscription (`not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Web Push not configured (`push_disabled`) */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
