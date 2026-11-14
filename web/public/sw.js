@@ -1,6 +1,5 @@
-// Service worker for the hetzner-monitor PWA (ADR-0015, ADR-0016). Plain JavaScript, no build step.
-//
-// It caches the app shell only, so the UI opens offline and installs as a PWA. API data is never
+// Service worker for the hetzner-monitor PWA (ADR-0015, ADR-0016, ADR-0017). Plain JavaScript,
+// no build step. It shows Web Push notifications (end of this file) and caches the app shell only, so the UI opens offline and installs as a PWA. API data is never
 // cached: requests under /api/ always go to the network untouched (sessions, CSRF and alert state
 // must be live).
 //
@@ -166,5 +165,69 @@ async function networkFirst(request) {
   }
 }
 
-// M6b (Web Push, ADR-0017) adds the "push" handler (show the notification: title, text, severity
-// tag, renotify) and the "notificationclick" handler (focus or open /alerts/{id}) here.
+// Web Push (ADR-0017). The server sends one encrypted JSON message per device (the browser
+// decrypts it): { title, body, tag, url, event, severity }. Notifications of one alert share a
+// tag, so a newer one (still firing, resolved) replaces the older and alerts again (renotify).
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(showPush(event.data));
+});
+
+async function showPush(data) {
+  let message;
+  try {
+    message = data ? data.json() : {};
+  } catch {
+    message = { body: data ? data.text() : "" };
+  }
+  const title = typeof message.title === "string" ? message.title : "hetzner-monitor";
+  const tag = typeof message.tag === "string" ? message.tag : undefined;
+  await self.registration.showNotification(title, {
+    body: typeof message.body === "string" ? message.body : "",
+    tag,
+    renotify: Boolean(tag),
+    requireInteraction: message.severity === "critical" && message.event !== "resolved",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+    timestamp: Date.now(),
+    data: { url: safePath(message.url) },
+  });
+}
+
+/** Only same-origin paths: a message must not open another site (also not via "//" or "/\\"). */
+function safePath(url) {
+  if (typeof url !== "string") return "/alerts";
+  try {
+    const resolved = new URL(url, self.location.origin);
+    if (resolved.origin === self.location.origin) {
+      return resolved.pathname + resolved.search + resolved.hash;
+    }
+  } catch {
+    // Not a URL: fall through.
+  }
+  return "/alerts";
+}
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const path = safePath(event.notification.data?.url);
+  event.waitUntil(openPath(path));
+});
+
+/** Focuses an open window of the app and navigates it to `path`, or opens a new one. */
+async function openPath(path) {
+  const target = new URL(path, self.location.origin).href;
+  // Only windows this worker controls can be navigated (an uncontrolled one, e.g. after a hard
+  // reload, would reject); those are same-origin by definition.
+  const windows = await self.clients.matchAll({ type: "window" });
+  for (const client of windows) {
+    try {
+      const focused = await client.focus();
+      if (focused.url !== target) await focused.navigate(target);
+      return;
+    } catch {
+      break;
+    }
+  }
+  await self.clients.openWindow(target);
+}

@@ -28,10 +28,15 @@ by `min_severity` or pinned rule channels, re-notify, `POST /alerts/{id}/ack`, s
 the token), `/me`, `PUT /me/password`, login throttling, Argon2id; `HM_MASTER_KEYS` + `keys status|rotate`, startup key check
 (ADR-0013). **M5b done, v0.1.0 released** (README real check deferred by owner until the web UI): OpenAPI 3.1 from code (`utoipa`, `/api/v1/openapi.json`, `hetzner-monitor openapi`), README
 self-hosting guide, Compose on the GHCR image, release workflow on `v*` tags, `CHANGELOG.md`, version 0.1.0 (ADR-0014).
-**M6a in progress** (branch `feat/m6a-web-ui`, [plan](docs/plans/2026-11-13-m6-pwa-web-push.md)): React PWA in `web/`
+**M6a done** ([plan](docs/plans/2026-11-13-m6-pwa-web-push.md)): React PWA in `web/`
 (React 19, Vite, React Router, TanStack Query, client generated from the OpenAPI document), embedded into the binary with
 `rust-embed` behind the cargo feature `web-ui` and served by the router's fallback with a strict CSP (ADR-0015, ADR-0016,
-[docs/design/web.md](docs/design/web.md)); notification links point to `/alerts/{id}`. M6b (Web Push) follows.
+[docs/design/web.md](docs/design/web.md)); notification links point to `/alerts/{id}`.
+**M6b in progress** (branch `feat/m6b-web-push`, owner real checks open): Web Push (ADR-0017) — own RFC 8291/8292 code in
+`hm-notify::push`, VAPID key generated and sealed in `vapid_keys`, `HM_VAPID_SUBJECT`, `/push/*` subscription API (per user
+and device, sealed, tombstones), channel type `web_push` fanned out into one job per device (`push_subscription_id`),
+`404`/`410` removes the device, service worker `push`/`notificationclick`, Settings → Push notifications. HTTPS for phones:
+Tailscale Serve or a reverse proxy (README step 8).
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are

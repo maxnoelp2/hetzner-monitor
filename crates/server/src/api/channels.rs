@@ -20,8 +20,9 @@ use crate::error::ApiError;
 use crate::http::AppState;
 use crate::notifier;
 use crate::openapi::ErrorBody;
-use crate::repo;
+use crate::push::PushSetupError;
 use crate::repo::channels::{ChannelView, NewChannel, Patch};
+use crate::repo::{self, OrgId};
 
 #[derive(Serialize, ToSchema)]
 pub struct ChannelList {
@@ -42,6 +43,38 @@ pub struct TestResult {
     /// Whether the notifier would retry this failure.
     #[serde(skip_serializing_if = "Option::is_none")]
     retryable: Option<bool>,
+    /// `web_push`: the result per targeted device. `ok` is true if every device got it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    devices: Option<Vec<DeviceResult>>,
+}
+
+/// A `web_push` test result for one device.
+#[derive(Serialize, ToSchema)]
+pub struct DeviceResult {
+    /// Push subscription id.
+    id: Uuid,
+    name: String,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+impl TestResult {
+    fn from_send(result: Result<(), SendError>) -> Self {
+        let (ok, error, retryable) = match result {
+            Ok(()) => (true, None, None),
+            Err(SendError::Retry { reason, .. }) => (false, Some(reason), Some(true)),
+            Err(SendError::Permanent { reason } | SendError::Gone { reason }) => {
+                (false, Some(reason), Some(false))
+            }
+        };
+        Self {
+            ok,
+            error,
+            retryable,
+            devices: None,
+        }
+    }
 }
 
 /// List notification channels (configs are never returned, only a `hint`). Scope: `read`.
@@ -113,6 +146,7 @@ pub enum ChannelConfigDoc {
     Url(UrlConfig),
     Webhook(WebhookConfig),
     Ntfy(NtfyConfig),
+    WebPush(WebPushConfig),
 }
 
 /// `email`.
@@ -154,6 +188,16 @@ pub struct NtfyConfig {
     token: Option<String>,
 }
 
+/// `web_push`: sends to the push subscriptions (devices) of these users; omit `users` for every
+/// member of the organisation. Users subscribe their devices with `POST /push/subscriptions`.
+#[derive(Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct WebPushConfig {
+    /// 1–100 user ids of members of the organisation.
+    users: Option<Vec<Uuid>>,
+}
+
 /// Create a channel. Scope: `write`.
 #[utoipa::path(post, path = "/channels", operation_id = "createChannel", tag = "channels",
     request_body = CreateChannel,
@@ -161,7 +205,7 @@ pub struct NtfyConfig {
         (status = CREATED, body = ChannelEnvelope),
         (status = BAD_REQUEST, description = "Invalid body or config (`bad_request`)", body = ErrorBody),
         (status = CONFLICT, description = "Name taken (`name_taken`)", body = ErrorBody),
-        (status = UNPROCESSABLE_ENTITY, description = "Email without SMTP settings (`email_disabled`)", body = ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Email without SMTP settings (`email_disabled`), Web Push without a VAPID subject (`push_disabled`)", body = ErrorBody),
     ))]
 pub async fn create(
     State(state): State<AppState>,
@@ -173,6 +217,7 @@ pub async fn create(
     let name = valid_name(&body.name)?;
     valid_severity(&body.min_severity)?;
     let config = parse_config(&state, &body.kind, &body.config)?;
+    check_push_users(&state, principal.org, &config).await?;
     let id = Uuid::new_v4();
     let sealed = seal(&state, id, &config)?;
     let hint = config.hint();
@@ -187,6 +232,7 @@ pub async fn create(
             hint: &hint,
             min_severity: &body.min_severity,
             enabled: body.enabled,
+            push_users: config.push_users(),
         },
         OffsetDateTime::now_utc(),
     )
@@ -217,7 +263,7 @@ pub struct UpdateChannel {
         (status = BAD_REQUEST, description = "Invalid body or config (`bad_request`)", body = ErrorBody),
         (status = NOT_FOUND, description = "Unknown channel (`not_found`)", body = ErrorBody),
         (status = CONFLICT, description = "Name taken (`name_taken`)", body = ErrorBody),
-        (status = UNPROCESSABLE_ENTITY, description = "Email without SMTP settings (`email_disabled`)", body = ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Email without SMTP settings (`email_disabled`), Web Push without a VAPID subject (`push_disabled`)", body = ErrorBody),
     ))]
 pub async fn update(
     State(state): State<AppState>,
@@ -236,19 +282,25 @@ pub async fn update(
     if let Some(s) = &body.min_severity {
         valid_severity(s)?;
     }
-    let sealed_hint = body
+    let new_config = body
         .config
         .as_ref()
-        .map(|raw| {
-            let config = parse_config(&state, &current.kind, raw)?;
-            Ok::<_, ApiError>((seal(&state, id, &config)?, config.hint()))
-        })
+        .map(|raw| parse_config(&state, &current.kind, raw))
+        .transpose()?;
+    if let Some(config) = &new_config {
+        check_push_users(&state, principal.org, config).await?;
+    }
+    let sealed_hint = new_config
+        .as_ref()
+        .map(|config| Ok::<_, ApiError>((seal(&state, id, config)?, config.hint(), config)))
         .transpose()?;
     let patch = Patch {
         name: name.as_deref(),
         min_severity: body.min_severity.as_deref(),
         enabled: body.enabled,
-        config: sealed_hint.as_ref().map(|(s, h)| (s, h.as_str())),
+        config: sealed_hint
+            .as_ref()
+            .map(|(s, h, c)| (s, h.as_str(), c.push_users())),
     };
     let channel = repo::channels::update(
         &mut tx,
@@ -287,7 +339,9 @@ pub async fn remove(
 
 /// Send a test notification now (also to disabled channels). Scope: `write`.
 ///
-/// Delivery failures are reported in the body with status 200.
+/// Delivery failures are reported in the body with status 200. A `web_push` channel sends to
+/// every targeted device and reports each in `devices`; a device the push service reports gone
+/// is removed.
 #[utoipa::path(post, path = "/channels/{id}/test", operation_id = "testChannel", tag = "channels",
     params(("id" = Uuid, Path, description = "Channel id")),
     responses(
@@ -309,28 +363,89 @@ pub async fn test(
         .ok_or_else(ApiError::not_found)?;
     let now = OffsetDateTime::now_utc();
     let payload = Payload::test(&channel.name, &notifier::rfc3339(now));
-    let result = match notifier::decrypt_config(&state, id, &channel.kind, &sealed) {
-        Ok(config) => state.notifier.send(&config, &payload, "test").await,
-        Err(e) => Err(e),
+    let config = match notifier::decrypt_config(&state, id, &channel.kind, &sealed) {
+        Ok(config) => config,
+        Err(e) => return Ok(Json(TestResult::from_send(Err(e)))),
     };
+    if let ChannelConfig::WebPush(_) = &config {
+        return test_push(&state, principal.org, id, &config, &payload, now)
+            .await
+            .map(Json);
+    }
+    let result = state.notifier.send(&config, &payload, "test").await;
     tracing::info!(channel_id = %id, ok = result.is_ok(), "channel test");
-    Ok(Json(match result {
-        Ok(()) => TestResult {
-            ok: true,
-            error: None,
-            retryable: None,
-        },
-        Err(SendError::Retry { reason, .. }) => TestResult {
+    Ok(Json(TestResult::from_send(result)))
+}
+
+async fn test_push(
+    state: &AppState,
+    org: OrgId,
+    channel_id: Uuid,
+    config: &ChannelConfig,
+    payload: &Payload,
+    now: OffsetDateTime,
+) -> Result<TestResult, ApiError> {
+    let vapid = match state.push.vapid(&state.db, &state.keyring).await {
+        Ok(v) => v,
+        Err(PushSetupError::Disabled) => {
+            return Ok(TestResult::from_send(Err(SendError::Permanent {
+                reason: "web push is not configured on the server".to_owned(),
+            })));
+        }
+        Err(e) => return Err(ApiError::internal(&e)),
+    };
+    let targets = repo::push::targets(&state.db, org, config.push_users()).await?;
+    if targets.is_empty() {
+        return Ok(TestResult {
             ok: false,
-            error: Some(reason),
-            retryable: Some(true),
-        },
-        Err(SendError::Permanent { reason }) => TestResult {
-            ok: false,
-            error: Some(reason),
+            error: Some("no device is subscribed".to_owned()),
             retryable: Some(false),
-        },
-    }))
+            devices: Some(Vec::new()),
+        });
+    }
+    let mut devices = Vec::with_capacity(targets.len());
+    for target in &targets {
+        let result = match notifier::decrypt_subscription(state, target.id, &target.sealed()) {
+            Ok(sub) => state.notifier.send_push(&vapid, &sub, payload).await,
+            Err(e) => Err(e),
+        };
+        if matches!(result, Err(SendError::Gone { .. })) {
+            let mut conn = state.db.acquire().await?;
+            repo::push::mark_gone(&mut conn, target.id, now).await?;
+        }
+        devices.push(DeviceResult {
+            id: target.id,
+            name: target.name.clone(),
+            ok: result.is_ok(),
+            error: result.err().map(|e| e.to_string()),
+        });
+    }
+    let failed = devices.iter().filter(|d| !d.ok).count();
+    tracing::info!(%channel_id, devices = devices.len(), failed, "channel test");
+    Ok(TestResult {
+        ok: failed == 0,
+        error: (failed > 0).then(|| format!("{failed} of {} devices failed", devices.len())),
+        retryable: None,
+        devices: Some(devices),
+    })
+}
+
+/// A `web_push` channel's `users` must be members of the org.
+async fn check_push_users(
+    state: &AppState,
+    org: OrgId,
+    config: &ChannelConfig,
+) -> Result<(), ApiError> {
+    let Some(users) = config.push_users() else {
+        return Ok(());
+    };
+    let members = repo::push::count_members(&state.db, org, users).await?;
+    if usize::try_from(members).ok() != Some(users.len()) {
+        return Err(ApiError::bad_request(
+            "web_push config: every entry of `users` must be a member of the organisation",
+        ));
+    }
+    Ok(())
 }
 
 fn valid_name(raw: &str) -> Result<String, ApiError> {
@@ -349,6 +464,9 @@ fn parse_config(state: &AppState, kind: &str, raw: &Value) -> Result<ChannelConf
             "email_disabled",
             "email channels need SMTP settings on the server (HM_SMTP_HOST, HM_SMTP_FROM)",
         ));
+    }
+    if matches!(config, ChannelConfig::WebPush(_)) && !state.push.enabled() {
+        return Err(crate::api::push::disabled());
     }
     Ok(config)
 }

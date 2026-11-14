@@ -6,6 +6,7 @@ use std::time::Duration as StdDuration;
 
 use hm_core::crypto::{self, Sealed};
 use hm_core::delivery;
+use hm_notify::push::Subscription;
 use hm_notify::{
     AlertInfo, ChannelConfig, Event, Named, PAYLOAD_VERSION, Payload, ResourceInfo, SendError,
 };
@@ -14,6 +15,8 @@ use time::{Duration, OffsetDateTime};
 use tokio::sync::watch;
 
 use crate::http::AppState;
+use crate::push::PushSetupError;
+use crate::repo;
 use crate::repo::notifications::{self, Job};
 
 /// How often the notifier looks for due jobs.
@@ -38,10 +41,17 @@ pub async fn run(state: AppState, mut shutdown: watch::Receiver<bool>) {
                 }
             }
             _ = cleanup.tick() => {
-                match notifications::cleanup(&state.db, OffsetDateTime::now_utc()).await {
+                let now = OffsetDateTime::now_utc();
+                match notifications::cleanup(&state.db, now).await {
                     Ok(0) => {}
                     Ok(n) => tracing::info!(deleted = n, "old notification jobs cleaned up"),
                     Err(error) => tracing::warn!(%error, "notification job cleanup failed"),
+                }
+                let before = now - Duration::days(notifications::JOB_RETENTION_DAYS);
+                match repo::push::purge(&state.db, before).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(deleted = n, "removed push subscriptions purged"),
+                    Err(error) => tracing::warn!(%error, "push subscription purge failed"),
                 }
             }
             _ = shutdown.changed() => break,
@@ -75,11 +85,18 @@ pub async fn run_once(state: &AppState, now: OffsetDateTime) -> Result<usize, sq
                             Some(now + Duration::seconds(i64::try_from(wait).unwrap_or(3600))),
                         )
                     }
-                    SendError::Retry { reason, .. } | SendError::Permanent { reason } => {
-                        (reason.as_str(), None)
-                    }
+                    SendError::Retry { reason, .. }
+                    | SendError::Permanent { reason }
+                    | SendError::Gone { reason } => (reason.as_str(), None),
                 };
                 notifications::mark_failed(&mut tx, job.id, reason, retry_at, now).await?;
+                if let (SendError::Gone { .. }, Some(subscription)) =
+                    (&error, job.push_subscription_id)
+                {
+                    // The push service dropped the subscription: no further jobs for this device.
+                    repo::push::mark_gone(&mut tx, subscription, now).await?;
+                    tracing::info!(job_id = job.id, subscription_id = %subscription, "push subscription gone, removed");
+                }
                 if retry_at.is_some() {
                     tracing::info!(job_id = job.id, channel_id = %job.channel_id, attempts, reason, "notification retry scheduled");
                 } else {
@@ -108,10 +125,65 @@ async fn deliver(state: &AppState, job: &Job) -> Result<(), SendError> {
         },
     )?;
     let payload = payload(state, job).map_err(|e| permanent(&e))?;
+    if matches!(config, ChannelConfig::WebPush(_)) {
+        return deliver_push(state, job, &payload).await;
+    }
     state
         .notifier
         .send(&config, &payload, &job.id.to_string())
         .await
+}
+
+async fn deliver_push(state: &AppState, job: &Job, payload: &Payload) -> Result<(), SendError> {
+    let Some(subscription_id) = job.push_subscription_id else {
+        return Err(permanent("web push job without a device"));
+    };
+    let (Some(secret_ct), Some(dek_ct), Some(key_version)) =
+        (&job.push_ct, &job.push_dek_ct, job.push_key_version)
+    else {
+        return Err(permanent("device removed or its user is no longer active"));
+    };
+    let vapid = match state.push.vapid(&state.db, &state.keyring).await {
+        Ok(v) => v,
+        Err(PushSetupError::Disabled) => {
+            return Err(permanent("web push is not configured on the server"));
+        }
+        Err(PushSetupError::Database(error)) => {
+            tracing::warn!(%error, "VAPID key could not be loaded");
+            return Err(SendError::Retry {
+                reason: "VAPID key unavailable".to_owned(),
+                after: None,
+            });
+        }
+        Err(error) => {
+            tracing::error!(%error, "VAPID key unusable");
+            return Err(permanent("VAPID key unusable"));
+        }
+    };
+    let subscription = decrypt_subscription(
+        state,
+        subscription_id,
+        &Sealed {
+            secret_ct: secret_ct.clone(),
+            dek_ct: dek_ct.clone(),
+            key_version,
+        },
+    )?;
+    state
+        .notifier
+        .send_push(&vapid, &subscription, payload)
+        .await
+}
+
+/// Opens a push subscription (AAD = subscription id). Errors are redacted.
+pub fn decrypt_subscription(
+    state: &AppState,
+    id: uuid::Uuid,
+    sealed: &Sealed,
+) -> Result<Subscription, SendError> {
+    let plain = crypto::open(&state.keyring, id.as_bytes(), sealed)
+        .map_err(|_| permanent("push subscription cannot be decrypted"))?;
+    serde_json::from_slice(&plain).map_err(|_| permanent("push subscription is corrupt"))
 }
 
 /// Opens and parses a channel config (AAD = channel id). Errors are redacted.

@@ -22,5 +22,8 @@
 | **Envelope encryption** | Secret encrypted with a DEK, DEK encrypted with the master key. |
 | **PWA** | Progressive web app: the web UI (`web/`), installable from the browser like an app ([web](design/web.md)). |
 | **App shell** | The static files of the UI (`index.html`, scripts, styles, fonts, icons) — the only thing the service worker caches. |
-| **Service worker** | Browser script (`sw.js`) that runs beside the page: caches the app shell; receives Web Push messages (M6b). |
+| **Service worker** | Browser script (`sw.js`) that runs beside the page: caches the app shell; shows Web Push messages as notifications. |
+| **Web Push** | Browser push notifications (RFC 8030) through the browser vendor's push service; messages are encrypted for the device (RFC 8291). |
+| **Push subscription** | What a browser returns when it allows push: an endpoint URL plus keys. Secret, sealed; one per user and device. |
+| **VAPID** | Voluntary application server identification (RFC 8292): the installation's key pair that signs every push request. |
 | **CSP** | Content Security Policy: response header that limits where the UI may load code and data from (only its own origin). |

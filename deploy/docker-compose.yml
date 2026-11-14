@@ -43,6 +43,8 @@ services:
       HM_SMTP_PASSWORD: ${HM_SMTP_PASSWORD:-}
       HM_SMTP_FROM: ${HM_SMTP_FROM:-}
       HM_ALLOW_PRIVATE_TARGETS: ${HM_ALLOW_PRIVATE_TARGETS:-}
+      # Web Push contact (mailto: or https:); defaults to an https:// HM_BASE_URL. Unset with an http:// base URL = no push.
+      HM_VAPID_SUBJECT: ${HM_VAPID_SUBJECT:-}
     ports:
       - "127.0.0.1:${HM_PORT:-8080}:8080"
     depends_on:

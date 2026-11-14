@@ -5,6 +5,7 @@ mod api_keys;
 mod auth;
 mod channels;
 mod projects;
+pub(crate) mod push;
 mod rules;
 mod silences;
 
@@ -36,6 +37,10 @@ pub fn routes() -> OpenApiRouter<AppState> {
         .routes(routes!(channels::test))
         .routes(routes!(silences::list, silences::create))
         .routes(routes!(silences::remove))
+        .routes(routes!(push::config))
+        .routes(routes!(push::list, push::create))
+        .routes(routes!(push::remove))
+        .routes(routes!(push::test))
         .routes(routes!(api_keys::list, api_keys::create))
         .routes(routes!(api_keys::revoke))
 }

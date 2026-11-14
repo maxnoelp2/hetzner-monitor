@@ -63,13 +63,19 @@ after two successful cycles, like any other alert.
 | Discord | Webhook | webhook URL |
 | Webhook | JSON `POST`, header `X-HM-Signature: sha256=<HMAC of body>` | URL + signing secret |
 | ntfy | HTTP `POST` to topic | server URL, topic, optional token |
-| Web Push | VAPID (`web-push`) for the PWA | per-device subscription |
+| Web Push | RFC 8030 push service, RFC 8291 encryption, RFC 8292 VAPID ([ADR-0017](../adr/0017-web-push.md)) | none in the channel (`users?`); per-device subscriptions are sealed separately |
 
-Web Push is planned with the PWA (M6); the other five channels are implemented (M4, crate `hm-notify`).
+All six channel types are implemented in the crate `hm-notify` (Web Push since M6b).
 
 - **Routing** (decided when the event is written): a rule with pinned channels (`rule_channels`) notifies those (if enabled),
   otherwise every enabled channel of the org whose `min_severity` (default `warning`) the alert reaches. `resolved` goes
   only to the channels its `fired`/`renotified` went to. One-shot alerts (`resource_lifecycle`) notify once (`fired`).
+- **Web Push fan-out:** a routed `web_push` channel becomes **one job per device**: every live push subscription of its
+  `users` (all members of the org when omitted) whose owner is still an active member at the time of the event (a
+  queued job for a user who left the org or was disabled meanwhile fails with `device removed or its user is no longer
+  active`); without devices it gets no job. `resolved`
+  goes to the devices the `fired`/`renotified` went to that still exist. A `404`/`410` from the push service fails the
+  job without retry (`device unsubscribed (HTTP 410)`) and removes the subscription, so later events skip it.
 - **Queue** (ADR-0012): `fired`, `resolved` and `renotified` insert `notification_jobs` in the alert's transaction. The
   notifier (modes `all`/`worker`, every 2 s) claims due jobs with `FOR UPDATE SKIP LOCKED` and sends while holding the
   lock (10 s timeout). Failures re-queue with backoff 30 s · 2ⁿ⁻¹ (max 1 h; a `429` `Retry-After` is used instead) up to
@@ -78,7 +84,11 @@ Web Push is planned with the PWA (M6); the other five channels are implemented (
   link (`HM_BASE_URL/alerts/{id}`, the alert in the web UI, when set). Slack: `{text}` (mrkdwn, escaped). Discord: `{content}` ≤ 2000 chars,
   mentions disabled. ntfy: JSON publish to the server root with `topic`, `title`, `message`, `priority` (critical 5,
   warning 4, else 3), `tags`, `click`; optional `Authorization: Bearer`. Email: plain text via SMTP.
-- **Native push** (APNs/FCM) arrives with the Tauri mobile app.
+  Web Push: an encrypted JSON message `{title, body, tag, url, event, severity}` (≤ 3 KB, body shortened) with
+  `TTL` (critical 24 h, warning 12 h, info 1 h, test 10 min) and `Urgency` (critical and tests `high`, warning and
+  resolves `normal`, info `low`); one `tag` per alert, so a resolve or re-notify replaces the earlier notification. The
+  service worker opens `/alerts/{id}` on click.
+- **Native push** (APNs/FCM directly) arrives with the Tauri mobile app.
 
 ### Webhook payload (version 1)
 

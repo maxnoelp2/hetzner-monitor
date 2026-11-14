@@ -86,13 +86,15 @@ async fn migrations_create_all_tables(pool: PgPool) {
             "notification_channels",
             "notification_jobs",
             "organizations",
+            "push_subscriptions",
             "resources",
             "rule_channels",
             "rules",
             "sessions",
             "silences",
             "traffic_samples",
-            "users"
+            "users",
+            "vapid_keys"
         ]
     );
 }

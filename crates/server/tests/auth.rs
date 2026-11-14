@@ -589,7 +589,8 @@ async fn key_rotation_end_to_end(pool: PgPool) {
         done,
         keys::Rotated {
             projects: 1,
-            channels: 1
+            channels: 1,
+            ..keys::Rotated::default()
         }
     );
     let status = keys::status(&pool).await.unwrap();

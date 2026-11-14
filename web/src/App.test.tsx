@@ -125,4 +125,21 @@ describe("App session", () => {
     const gets = calls.filter((c) => c.method === "GET");
     expect(gets.every((c) => c.headers.get("X-CSRF-Token") === null)).toBe(true);
   });
+
+  it("removes this browser's push device before logging out", async () => {
+    const { calls } = server();
+    localStorage.setItem("hm-push-subscription-id", "dev-1");
+    renderApp(<AppRoutes />, "/alerts");
+    await logIn();
+
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+    expect(await screen.findByRole("heading", { name: "Log in" })).toBeInTheDocument();
+
+    const paths = calls.filter((c) => c.method !== "GET").map((c) => `${c.method} ${c.path}`);
+    expect(paths.slice(-2)).toEqual([
+      "DELETE /api/v1/push/subscriptions/dev-1",
+      "POST /api/v1/auth/logout",
+    ]);
+    expect(localStorage.getItem("hm-push-subscription-id")).toBeNull();
+  });
 });

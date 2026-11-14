@@ -1,6 +1,6 @@
 # Design: HTTP API
 
-Status: endpoints marked ✅ are **implemented** (M1–M5b); the rest **proposed** · Crate: `crates/server`
+Status: endpoints marked ✅ are **implemented** (M1–M6b); the rest **proposed** · Crate: `crates/server`
 
 REST under `/api/v1`, JSON. The OpenAPI 3.1 document is **generated from code** (`utoipa` 6 + `utoipa-axum` 0.3) and
 served at `GET /api/v1/openapi.json` (unauthenticated) and printed by `hetzner-monitor openapi`; the PWA's TypeScript
@@ -21,7 +21,8 @@ method) and non-`GET`/`HEAD` requests outside `/api` get the JSON `404 not_found
 - Handlers return typed structs (`Serialize` + `ToSchema`), so response schemas are derived from what is serialised.
   Text columns with a closed set of values (severity, alert state, resource kind, channel type, …) are documented as
   string enums (`crate::openapi::enums`). In response schemas every field is required (`None` is sent as `null`), except
-  fields skipped when empty (`Health.reason`, `TestResult.error`/`retryable`); request `Option` fields may be omitted.
+  fields skipped when empty (`Health.reason`, `TestResult.error`/`retryable`/`devices`, `DeviceResult.error`,
+  `PushConfig.vapid_public_key`, `PushTestResult.error`/`gone`); request `Option` fields may be omitted.
 - Security schemes: `api_key` (HTTP Bearer), `session` (cookie `hm_session`), `csrf` (header `X-CSRF-Token`). The
   requirement per operation is derived from the method like the auth layer does: GET → `api_key` or `session`;
   other methods → `api_key` or `session` + `csrf`; `/auth/login`, `/healthz`, `/readyz`, `/openapi.json` → none.
@@ -41,7 +42,10 @@ GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later gra
 ✅ GET /alerts?state=open|pending|firing|resolved&project_id=&page=&per_page= → {alerts, meta.pagination} · ✅ GET /alerts/{id} → {alert, events, notifications}
 ✅ POST /alerts/{id}/ack → {alert} (idempotent; resolved → 409 alert_resolved)
 ✅ GET /channels · ✅ POST /channels {type, name, config, min_severity?, enabled?} → 201 {channel} · ✅ GET/PATCH/DELETE /channels/{id}
-✅ POST /channels/{id}/test → {ok: true} | {ok: false, error, retryable}
+✅ POST /channels/{id}/test → {ok: true} | {ok: false, error, retryable} · web_push: {ok, error?, devices: [{id, name, ok, error?}]}
+✅ GET /push/config → {enabled, vapid_public_key?}
+✅ GET /push/subscriptions → {subscriptions} (the caller's devices) · ✅ POST /push/subscriptions {endpoint, keys: {p256dh, auth}, expirationTime?, name?} → 201 | 200 {subscription}
+✅ DELETE /push/subscriptions/{id} → 204 · ✅ POST /push/subscriptions/{id}/test → {ok, error?, gone?}
 ✅ GET /silences?active=true|false · ✅ POST /silences {project_id?, resource_id?, rule_id?, selector?, starts_at?, ends_at, reason?} → 201 {silence} · ✅ DELETE /silences/{id} (ends it now)
 ✅ GET /api-keys · ✅ POST /api-keys {name, scopes} → 201 {api_key, key} (key shown once) · ✅ DELETE /api-keys/{id} (revoke)
 ✅ GET /api/v1/openapi.json → OpenAPI 3.1 document (no auth)
@@ -73,17 +77,29 @@ GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later gra
   Rules are writable with the `write` scope.
 - `PATCH /rules/{id}` `channel_ids`: pins the rule to these channels of the org (`[]` unpins; unknown id → 400);
   the response carries the rule and its `channel_ids`.
-- **Channels** (`write` scope to change): `type` is `email | slack | discord | webhook | ntfy` with `config`
-  `{to: [addresses]}` · `{url}` · `{url}` · `{url, secret (16–256 chars)}` · `{server? (default https://ntfy.sh), topic, token?}`.
-  The config is write-only (sealed at rest); responses show `hint` (URL host or recipient count). `min_severity` defaults
+- **Channels** (`write` scope to change): `type` is `email | slack | discord | webhook | ntfy | web_push` with `config`
+  `{to: [addresses]}` · `{url}` · `{url}` · `{url, secret (16–256 chars)}` · `{server? (default https://ntfy.sh), topic, token?}`
+  · `{users?: [user_id]}` (1–100 members of the org; omitted = every member).
+  The config is write-only (sealed at rest); responses show `hint` (URL host, recipient count, `all members` / `N users`). `min_severity` defaults
   to `warning`. Names are unique per org (`409 name_taken`). Email needs `HM_SMTP_HOST` on the server (`422 email_disabled`).
   `PATCH` replaces `config` completely when given. `POST /channels/{id}/test` sends now, also to disabled channels; errors are
-  short and redacted (`HTTP 404`, `timeout`, `target address not allowed`).
+  short and redacted (`HTTP 404`, `timeout`, `target address not allowed`). A `web_push` channel needs Web Push on the
+  server (`422 push_disabled`, see `HM_VAPID_SUBJECT`); its test sends to every targeted device and reports each in
+  `devices`; a device whose push service answers `404`/`410` is removed ([ADR-0017](../adr/0017-web-push.md)).
+- **Push subscriptions** (M6b): per user and device, scoped to the caller and the org (`read` to list, `write` to change;
+  other users' and tenants' ids are `404`). `POST` takes `PushSubscription.toJSON()` plus a `name` (1–100 characters,
+  default `Device`); `endpoint` must be `https://`; `p256dh` must be a P-256 point and `auth` 16 bytes (base64url).
+  Registering a known endpoint again (same org) replaces keys and name and answers `200`; an endpoint another member
+  registered moves to the caller only with the same keys (same browser subscription), else `409 endpoint_taken`.
+  Endpoint and keys are write-only (sealed); responses show `{id, name, host, created_at, updated_at}`. `DELETE`
+  removes the device (tombstone, ciphertext wiped). Without a VAPID subject: `GET /push/config` → `{enabled: false}`,
+  `POST` → `422 push_disabled`.
 - **Silences:** all scope fields optional (none = the whole org); `selector` uses the rule selector syntax and is matched
   against resource labels; at most 365 days; `ends_at` must be in the future. `GET` lists only not-yet-ended silences unless
   `active=false`. `DELETE` sets `ends_at` to now (a future silence is removed).
-- `GET /alerts/{id}` `notifications`: one entry per delivery job `{id, alert_event_id, channel_id, channel_name, status
-  (queued|sent|failed), attempts, last_error, next_attempt_at, finished_at}`; the alert shows `acked_at`, `acked_by`, `last_notified_at`.
+- `GET /alerts/{id}` `notifications`: one entry per delivery job `{id, alert_event_id, channel_id, channel_name, device
+  (web_push: the device name, also after removal; else null), status (queued|sent|failed), attempts, last_error,
+  next_attempt_at, finished_at}`; the alert shows `acked_at`, `acked_by`, `last_notified_at`.
 - Implemented error codes (schema `ErrorCode`): `unauthorized` (401), `invalid_credentials` (401, login), `forbidden` (403), `csrf_failed` (403), `wrong_password` (403), `too_many_attempts` (429), `not_found` (404, also for other tenants' ids and malformed ids),
-  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `alert_resolved` (409), `invalid_token` (422, connect), `email_disabled` (422), `hetzner_invalid_token` / `hetzner_unavailable` (502),
+  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `alert_resolved` (409), `invalid_token` (422, connect), `email_disabled` (422), `push_disabled` (422), `endpoint_taken` (409), `hetzner_invalid_token` / `hetzner_unavailable` (502),
   `hetzner_rate_limited` (503), `internal` (500).

@@ -9,9 +9,11 @@ invariants must hold. Details live in [docs/design/](docs/README.md#design); the
 > forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
 > notifier, silences and ack are done; M5a: password login, server-side sessions with CSRF, versioned master keys and
 > `keys rotate` are done; M5b: the OpenAPI 3.1 document generated from the handlers and the release pipeline (multi-arch
-> image on GHCR, [ADR-0014](docs/adr/0014-release-and-versioning.md)) are done. **M6a in progress:** the React PWA in
-> `web/`, embedded in the binary and served on the API's origin ([ADR-0015](docs/adr/0015-web-ui-embedded-in-binary.md),
-> [web](docs/design/web.md)). Not yet: Web Push (M6b). Everything else below is the target design.
+> image on GHCR, [ADR-0014](docs/adr/0014-release-and-versioning.md)) are done. M6a: the React PWA in `web/`, embedded
+> in the binary and served on the API's origin ([ADR-0015](docs/adr/0015-web-ui-embedded-in-binary.md),
+> [web](docs/design/web.md)), is done. **M6b in progress:** Web Push — VAPID key, push subscriptions per device, the
+> `web_push` channel and service-worker notifications are implemented ([ADR-0017](docs/adr/0017-web-push.md)); the
+> owner's real checks are open. Everything else below is the target design.
 
 ## Bird's-eye view
 
@@ -63,7 +65,7 @@ crates/
             rate-limit header capture, metric value parsing (strings → f64). No DB, no domain logic.
   core/     [hm-core] Domain: check implementations, rule evaluation, alert state machine, label selectors,
             secret envelope encryption, budget maths. Pure where possible → unit-testable without IO.
-  notify/   [hm-notify] Channel adapters (email, slack, discord, webhook, ntfy; web push with M6) behind one `Notifier`.
+  notify/   [hm-notify] Channel adapters (email, slack, discord, webhook, ntfy, web push incl. RFC 8291/8292) behind one `Notifier`.
   server/   [hm-server → bin `hetzner-monitor`] The binary: Axum API, auth (sessions + API keys), scheduler loop, notifier worker,
             sqlx repositories, CLI subcommands (e.g. `keys rotate`), config loading, serving the embedded web UI.
 migrations/ sqlx SQL migrations (source of truth for the schema).

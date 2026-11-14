@@ -34,12 +34,24 @@ const REQUEST_SCHEMAS: &[&str] = &[
     "UrlConfig",
     "WebhookConfig",
     "NtfyConfig",
+    "WebPushConfig",
+    "CreatePushSubscription",
+    "SubscriptionKeys",
     "CreateSilence",
     "CreateKey",
 ];
 
 /// Response fields left out when `None` (`#[serde(skip_serializing_if)]`), as `schema.field`.
-const SPARSE_FIELDS: &[&str] = &["Health.reason", "TestResult.error", "TestResult.retryable"];
+const SPARSE_FIELDS: &[&str] = &[
+    "Health.reason",
+    "TestResult.error",
+    "TestResult.retryable",
+    "TestResult.devices",
+    "DeviceResult.error",
+    "PushConfig.vapid_public_key",
+    "PushTestResult.error",
+    "PushTestResult.gone",
+];
 
 /// Top-level document; paths are added by the router.
 #[derive(utoipa::OpenApi)]
@@ -62,6 +74,7 @@ const SPARSE_FIELDS: &[&str] = &["Health.reason", "TestResult.error", "TestResul
         (name = "alerts", description = "Alerts and their history"),
         (name = "channels", description = "Notification channels"),
         (name = "silences", description = "Suppress notifications for a scope and time window"),
+        (name = "push", description = "Web Push: VAPID key and this user's push subscriptions (devices)"),
         (name = "api-keys", description = "API keys for headless use"),
         (name = "system", description = "Health and the API description"),
     )
@@ -100,6 +113,8 @@ pub enum ErrorCode {
     AlertResolved,
     InvalidToken,
     EmailDisabled,
+    PushDisabled,
+    EndpointTaken,
     HetznerInvalidToken,
     HetznerUnavailable,
     HetznerRateLimited,
@@ -187,6 +202,7 @@ pub mod enums {
         Discord,
         Webhook,
         Ntfy,
+        WebPush,
     }
 
     #[derive(Serialize, ToSchema)]

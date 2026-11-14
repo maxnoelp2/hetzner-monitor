@@ -16,7 +16,7 @@ pub const JOB_RETENTION_DAYS: i64 = 90;
 /// What [`enqueue`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Enqueued {
-    /// Jobs for these channels.
+    /// Jobs for these channels (a `web_push` channel only if it had a device; one job per device).
     Jobs(Vec<Uuid>),
     /// A silence covers the alert; a `suppressed` event was recorded.
     Suppressed(Uuid),
@@ -35,7 +35,7 @@ struct AlertFacts {
 
 /// Routes the alert event `event_id` (`fired`, `resolved` or `renotified`) of `alert_id`:
 /// records a `suppressed` event if an active silence covers it, else inserts one queued job per
-/// routed channel. `fired`/`renotified` also set `last_notified_at` (also when suppressed, so a
+/// routed channel, and per subscribed device for `web_push` channels (ADR-0017). `fired`/`renotified` also set `last_notified_at` (also when suppressed, so a
 /// silence that ends does not cause an immediate re-notify).
 pub async fn enqueue(
     conn: &mut PgConnection,
@@ -65,6 +65,7 @@ pub async fn enqueue(
 
     let labels: Map<String, Value> = facts
         .labels
+        .as_ref()
         .and_then(|l| l.0.as_object().cloned())
         .unwrap_or_default();
     let candidates = silences::covering(
@@ -95,54 +96,88 @@ pub async fn enqueue(
         return Ok(Enqueued::Suppressed(silence_id));
     }
 
-    let channels: Vec<Uuid> = if kind == "resolved" {
-        // Only where the alert's fired / renotified notifications went.
+    let channels = insert_jobs(conn, org, &facts, event_id, alert_id, kind, now).await?;
+    let mut seen = std::collections::HashSet::new();
+    let channels: Vec<Uuid> = channels.into_iter().filter(|c| seen.insert(*c)).collect();
+    Ok(Enqueued::Jobs(channels))
+}
+
+/// Inserts the jobs of an event; returns the channel of each inserted job.
+async fn insert_jobs(
+    conn: &mut PgConnection,
+    org: OrgId,
+    facts: &AlertFacts,
+    event_id: i64,
+    alert_id: Uuid,
+    kind: &str,
+    now: OffsetDateTime,
+) -> Result<Vec<Uuid>, sqlx::Error> {
+    if kind == "resolved" {
+        // Only where the alert's fired / renotified notifications went: the same channels and,
+        // for web_push, the same devices that still exist.
         sqlx::query_scalar(
-            "SELECT DISTINCT j.channel_id FROM notification_jobs j
+            "INSERT INTO notification_jobs (alert_event_id, channel_id, push_subscription_id,
+                                            next_attempt_at, created_at)
+             SELECT DISTINCT $1::bigint, j.channel_id, j.push_subscription_id, $3::timestamptz, $3::timestamptz
+             FROM notification_jobs j
              JOIN alert_events e ON e.id = j.alert_event_id
              JOIN notification_channels c ON c.id = j.channel_id
-             WHERE e.alert_id = $1 AND e.type IN ('fired', 'renotified') AND c.enabled AND c.org_id = $2",
+             LEFT JOIN push_subscriptions s ON s.id = j.push_subscription_id
+             WHERE e.alert_id = $2 AND e.type IN ('fired', 'renotified') AND c.enabled AND c.org_id = $4
+               AND (j.push_subscription_id IS NULL OR (s.deleted_at IS NULL AND s.org_id = $4 AND EXISTS (
+                        SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+                        WHERE m.org_id = s.org_id AND m.user_id = s.user_id AND u.disabled_at IS NULL)))
+             ON CONFLICT DO NOTHING
+             RETURNING channel_id",
         )
+        .bind(event_id)
         .bind(alert_id)
+        .bind(now)
         .bind(org.0)
         .fetch_all(&mut *conn)
-        .await?
+        .await
     } else {
         // Pinned channels if the rule has any, else every enabled channel of the org whose
-        // `min_severity` the alert reaches.
+        // `min_severity` the alert reaches. A web_push channel becomes one job per live
+        // subscription of its users (all members if `push_users` is NULL); none without devices.
         sqlx::query_scalar(
             "WITH pinned AS (
                  SELECT c.id FROM rule_channels rc
                  JOIN notification_channels c ON c.id = rc.channel_id
                  WHERE rc.rule_id = $2 AND c.org_id = $1
+             ),
+             routed AS (
+                 SELECT c.id, c.type, c.push_users, c.created_at FROM notification_channels c
+                 WHERE c.org_id = $1 AND c.enabled
+                   AND CASE WHEN EXISTS (SELECT 1 FROM pinned) THEN c.id IN (SELECT id FROM pinned)
+                            ELSE array_position(ARRAY['info','warning','critical'], c.min_severity)
+                                 <= array_position(ARRAY['info','warning','critical'], $3)
+                       END
              )
-             SELECT c.id FROM notification_channels c
-             WHERE c.org_id = $1 AND c.enabled
-               AND CASE WHEN EXISTS (SELECT 1 FROM pinned) THEN c.id IN (SELECT id FROM pinned)
-                        ELSE array_position(ARRAY['info','warning','critical'], c.min_severity)
-                             <= array_position(ARRAY['info','warning','critical'], $3)
-                   END
-             ORDER BY c.created_at, c.id",
+             INSERT INTO notification_jobs (alert_event_id, channel_id, push_subscription_id,
+                                            next_attempt_at, created_at)
+             SELECT $4::bigint, r.id, s.id, $5::timestamptz, $5::timestamptz
+             FROM routed r
+             LEFT JOIN LATERAL (
+                 SELECT s.id, s.created_at FROM push_subscriptions s
+                 JOIN memberships m ON m.org_id = s.org_id AND m.user_id = s.user_id
+                 JOIN users u ON u.id = s.user_id AND u.disabled_at IS NULL
+                 WHERE r.type = 'web_push' AND s.org_id = $1 AND s.deleted_at IS NULL
+                   AND (r.push_users IS NULL OR s.user_id = ANY(r.push_users))
+             ) s ON true
+             WHERE r.type <> 'web_push' OR s.id IS NOT NULL
+             ORDER BY r.created_at, r.id, s.created_at, s.id
+             ON CONFLICT DO NOTHING
+             RETURNING channel_id",
         )
         .bind(org.0)
         .bind(facts.rule_id)
         .bind(&facts.severity)
-        .fetch_all(&mut *conn)
-        .await?
-    };
-    if !channels.is_empty() {
-        sqlx::query(
-            "INSERT INTO notification_jobs (alert_event_id, channel_id, next_attempt_at, created_at)
-             SELECT $1, c, $3, $3 FROM unnest($2::uuid[]) AS c
-             ON CONFLICT (alert_event_id, channel_id) DO NOTHING",
-        )
         .bind(event_id)
-        .bind(&channels)
         .bind(now)
-        .execute(&mut *conn)
-        .await?;
+        .fetch_all(&mut *conn)
+        .await
     }
-    Ok(Enqueued::Jobs(channels))
 }
 
 /// A claimed job with everything needed to build and send its payload. Its row stays locked
@@ -152,6 +187,11 @@ pub struct Job {
     pub id: i64,
     pub attempts: i32,
     pub channel_id: Uuid,
+    /// `web_push` jobs: the device. Its sealed data is `None` once it was removed (tombstone).
+    pub push_subscription_id: Option<Uuid>,
+    pub push_ct: Option<Vec<u8>>,
+    pub push_dek_ct: Option<Vec<u8>>,
+    pub push_key_version: Option<i32>,
     pub channel_type: String,
     pub channel_enabled: bool,
     pub config_ct: Vec<u8>,
@@ -181,7 +221,11 @@ pub async fn claim_next(
     now: OffsetDateTime,
 ) -> Result<Option<Job>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT j.id, j.attempts, j.channel_id, c.type AS channel_type, c.enabled AS channel_enabled,
+        "SELECT j.id, j.attempts, j.channel_id, j.push_subscription_id,
+                CASE WHEN s.deleted_at IS NULL AND active.ok THEN s.subscription_ct END AS push_ct,
+                CASE WHEN s.deleted_at IS NULL AND active.ok THEN s.subscription_dek_ct END AS push_dek_ct,
+                CASE WHEN s.deleted_at IS NULL AND active.ok THEN s.key_version END AS push_key_version,
+                c.type AS channel_type, c.enabled AS channel_enabled,
                 c.config_ct, c.config_dek_ct, c.key_version,
                 e.type AS event_type, e.at AS event_at, e.data AS event_data,
                 a.id AS alert_id, a.severity, a.fired_at, a.resolved_at,
@@ -195,6 +239,12 @@ pub async fn claim_next(
          JOIN rules r ON r.id = a.rule_id
          JOIN hetzner_projects p ON p.id = a.project_id AND p.org_id = c.org_id
          LEFT JOIN resources res ON res.id = a.resource_id
+         LEFT JOIN push_subscriptions s ON s.id = j.push_subscription_id AND s.org_id = c.org_id
+         -- A device whose owner left the org or was disabled gets nothing more.
+         LEFT JOIN LATERAL (
+             SELECT EXISTS (SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+                            WHERE m.org_id = s.org_id AND m.user_id = s.user_id AND u.disabled_at IS NULL) AS ok
+         ) active ON true
          WHERE j.status = 'queued' AND j.next_attempt_at <= $1
          ORDER BY j.next_attempt_at, j.id
          LIMIT 1
@@ -263,6 +313,8 @@ pub struct JobView {
     pub alert_event_id: i64,
     pub channel_id: Uuid,
     pub channel_name: String,
+    /// `web_push`: the device (push subscription) name, also after it was removed.
+    pub device: Option<String>,
     #[schema(value_type = crate::openapi::enums::JobStatus)]
     pub status: String,
     pub attempts: i32,
@@ -280,10 +332,11 @@ pub async fn for_alert(
     alert_id: Uuid,
 ) -> Result<Vec<JobView>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT j.id, j.alert_event_id, j.channel_id, c.name AS channel_name, j.status, j.attempts,
-                j.last_error, j.next_attempt_at, j.finished_at
+        "SELECT j.id, j.alert_event_id, j.channel_id, c.name AS channel_name, s.name AS device,
+                j.status, j.attempts, j.last_error, j.next_attempt_at, j.finished_at
          FROM notification_jobs j
          JOIN notification_channels c ON c.id = j.channel_id
+         LEFT JOIN push_subscriptions s ON s.id = j.push_subscription_id AND s.org_id = $1
          JOIN alert_events e ON e.id = j.alert_event_id
          JOIN alerts a ON a.id = e.alert_id
          JOIN hetzner_projects p ON p.id = a.project_id
