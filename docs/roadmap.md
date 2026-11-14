@@ -17,17 +17,17 @@ link the execution plan in `docs/plans/` that delivered them.
 ## M6 — in progress ([plan](plans/2026-11-13-m6-pwa-web-push.md), [ADR-0015](adr/0015-web-ui-embedded-in-binary.md), [ADR-0016](adr/0016-frontend-tooling.md))
 
 - M6a — web UI in the binary, session login:
-  - [ ] `web/` React + TypeScript PWA (Vite), embedded into the binary and served from `/` on the API's origin; client-side routing fallback to `index.html`, `/api/*` stays a JSON 404
-  - [ ] Strict CSP, `nosniff`, `Referrer-Policy: same-origin`; `immutable` hashed assets, `no-cache` for the rest; no third-party requests
-  - [ ] Login, session cookie, CSRF token in memory (re-read from `GET /me`), 401 returns to login, logout, password change
-  - [ ] Screens: alerts (filters, detail, ack), projects (connect, detail, inventory, sync), rules, channels (incl. test), silences, API keys, account
-  - [ ] API client generated from the OpenAPI document (`openapi-typescript`); CI fails on a stale generated file
-  - [ ] Owner's design system re-implemented in `web/` (dark-first, Geist, Lucide) plus tables, badges, empty and error states; usable at 375 px
-  - [ ] Installable PWA: `manifest.webmanifest`, service worker caching the app shell only
-  - [ ] Notification links point to `<HM_BASE_URL>/alerts/{id}`
-  - [ ] `cargo build` without Node still works (feature `web-ui`, placeholder page otherwise); Docker image and release enable it
-  - [ ] Tests: Rust integration tests for static serving and headers; Vitest + Testing Library for the API wrapper, login and alert ack
-  - [ ] CI `web` job (`npm ci`, typecheck, lint, test, build, generated-client check); Docker build with a Node stage
+  - [x] `web/` React + TypeScript PWA (Vite), embedded into the binary and served from `/` on the API's origin; client-side routing fallback to `index.html`, `/api/*` stays a JSON 404
+  - [x] Strict CSP, `nosniff`, `Referrer-Policy: same-origin`; `immutable` hashed assets, `no-cache` for the rest; no third-party requests
+  - [x] Login, session cookie, CSRF token in memory (re-read from `GET /me`), 401 returns to login, logout, password change
+  - [x] Screens: alerts (filters, detail, ack), projects (connect, detail, inventory, sync), rules, channels (incl. test), silences, API keys, account
+  - [x] API client generated from the OpenAPI document (`openapi-typescript`); CI fails on a stale generated file
+  - [x] Owner's design system re-implemented in `web/` (dark-first, Geist, Lucide) plus tables, badges, empty and error states; usable at 375 px
+  - [x] Installable PWA: `manifest.webmanifest`, service worker caching the app shell only
+  - [x] Notification links point to `<HM_BASE_URL>/alerts/{id}`
+  - [x] `cargo build` without Node still works (feature `web-ui`, placeholder page otherwise); Docker image and release enable it
+  - [x] Tests: Rust integration tests for static serving and headers; Vitest + Testing Library for the API wrapper, login and alert ack
+  - [x] CI `web` job (`npm ci`, typecheck, lint, test, build, generated-client check); Docker build with a Node stage
 - M6b — Web Push:
   - [ ] VAPID key pair generated on first start, stored envelope-encrypted, covered by `keys status` / `keys rotate`; `HM_VAPID_SUBJECT`
   - [ ] Push-subscription API per user and device (endpoint and keys sealed, SSRF-guarded `https://` endpoints)
