@@ -194,9 +194,18 @@ async function showPush(data) {
   });
 }
 
-/** Only same-origin paths: a message must not open another site. */
+/** Only same-origin paths: a message must not open another site (also not via "//" or "/\\"). */
 function safePath(url) {
-  return typeof url === "string" && url.startsWith("/") && !url.startsWith("//") ? url : "/alerts";
+  if (typeof url !== "string") return "/alerts";
+  try {
+    const resolved = new URL(url, self.location.origin);
+    if (resolved.origin === self.location.origin) {
+      return resolved.pathname + resolved.search + resolved.hash;
+    }
+  } catch {
+    // Not a URL: fall through.
+  }
+  return "/alerts";
 }
 
 self.addEventListener("notificationclick", (event) => {
@@ -208,12 +217,17 @@ self.addEventListener("notificationclick", (event) => {
 /** Focuses an open window of the app and navigates it to `path`, or opens a new one. */
 async function openPath(path) {
   const target = new URL(path, self.location.origin).href;
-  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  // Only windows this worker controls can be navigated (an uncontrolled one, e.g. after a hard
+  // reload, would reject); those are same-origin by definition.
+  const windows = await self.clients.matchAll({ type: "window" });
   for (const client of windows) {
-    if (new URL(client.url).origin !== self.location.origin) continue;
-    await client.focus();
-    if (client.url !== target && "navigate" in client) await client.navigate(target);
-    return;
+    try {
+      const focused = await client.focus();
+      if (focused.url !== target) await focused.navigate(target);
+      return;
+    } catch {
+      break;
+    }
   }
   await self.clients.openWindow(target);
 }

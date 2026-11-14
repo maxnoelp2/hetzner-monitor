@@ -71,7 +71,9 @@ All six channel types are implemented in the crate `hm-notify` (Web Push since M
   otherwise every enabled channel of the org whose `min_severity` (default `warning`) the alert reaches. `resolved` goes
   only to the channels its `fired`/`renotified` went to. One-shot alerts (`resource_lifecycle`) notify once (`fired`).
 - **Web Push fan-out:** a routed `web_push` channel becomes **one job per device**: every live push subscription of its
-  `users` (all members of the org when omitted) at the time of the event; without devices it gets no job. `resolved`
+  `users` (all members of the org when omitted) whose owner is still an active member at the time of the event (a
+  queued job for a user who left the org or was disabled meanwhile fails with `device removed or its user is no longer
+  active`); without devices it gets no job. `resolved`
   goes to the devices the `fired`/`renotified` went to that still exist. A `404`/`410` from the push service fails the
   job without retry (`device unsubscribed (HTTP 410)`) and removes the subscription, so later events skip it.
 - **Queue** (ADR-0012): `fired`, `resolved` and `renotified` insert `notification_jobs` in the alert's transaction. The

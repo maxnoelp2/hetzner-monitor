@@ -123,15 +123,16 @@ pub struct CreatePushSubscription {
 
 /// Subscribe this device. Scope: `write`.
 ///
-/// Idempotent per endpoint: registering a known endpoint again replaces its keys and name (and
-/// moves it to the caller, if another member of the organisation had registered it) and
-/// answers 200.
+/// Idempotent per endpoint: registering a known endpoint again replaces its keys and name and
+/// answers 200. An endpoint another member registered moves to the caller only if the same keys
+/// are presented (it is the same browser subscription); otherwise `409 endpoint_taken`.
 #[utoipa::path(post, path = "/push/subscriptions", operation_id = "createPushSubscription", tag = "push",
     request_body = CreatePushSubscription,
     responses(
         (status = CREATED, description = "Subscribed", body = PushSubscriptionEnvelope),
         (status = OK, description = "Known endpoint, updated", body = PushSubscriptionEnvelope),
         (status = BAD_REQUEST, description = "Invalid subscription (`bad_request`)", body = ErrorBody),
+        (status = CONFLICT, description = "Another member registered this endpoint with other keys (`endpoint_taken`)", body = ErrorBody),
         (status = UNPROCESSABLE_ENTITY, description = "Web Push not configured (`push_disabled`)", body = ErrorBody),
     ))]
 pub async fn create(
@@ -165,7 +166,18 @@ pub async fn create(
     // Two attempts: an insert can lose a race against a concurrent registration of the endpoint.
     for _ in 0..2 {
         let existing = repo::push::find_by_endpoint(&mut tx, principal.org, &hash).await?;
-        let id = existing.unwrap_or_else(Uuid::new_v4);
+        if let Some(found) = &existing
+            && found.user_id != principal.user.0
+            && !same_keys(&state, found, &sub)
+        {
+            // Someone who only learned the endpoint must not redirect another member's device.
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "endpoint_taken",
+                "another member registered this push endpoint",
+            ));
+        }
+        let id = existing.as_ref().map_or_else(Uuid::new_v4, |e| e.id);
         let sealed = crypto::seal(&state.keyring, id.as_bytes(), &plain)
             .map_err(|e| ApiError::internal(&e))?;
         let new = NewSubscription {
@@ -198,6 +210,17 @@ pub async fn create(
     Err(ApiError::internal(
         &"push subscription upsert did not settle",
     ))
+}
+
+/// Whether the stored subscription has the presented keys (the `auth` secret proves possession).
+fn same_keys(state: &AppState, found: &repo::push::Existing, sub: &Subscription) -> bool {
+    notifier::decrypt_subscription(state, found.id, &found.sealed()).is_ok_and(|stored| {
+        stored.p256dh == sub.p256dh && constant_time_eq(stored.auth.as_bytes(), sub.auth.as_bytes())
+    })
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Unsubscribe one of the caller's devices. Scope: `write`.

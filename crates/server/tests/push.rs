@@ -74,6 +74,15 @@ async fn add_device(st: &AppState, org: Uuid, user: Uuid, endpoint: &str, name: 
     id
 }
 
+/// An API key for an existing member.
+async fn key_for(pool: &PgPool, org: Uuid, user: Uuid) -> String {
+    let key = hm_core::apikey::generate().unwrap();
+    hm_server::repo::api_keys::insert(pool, OrgId(org), UserId(user), "t", &[Scope::Write], &key)
+        .await
+        .unwrap();
+    key.full.expose().as_str().to_owned()
+}
+
 async fn push_service(status: u16) -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -600,4 +609,180 @@ async fn key_rotation_covers_push_secrets(pool: PgPool) {
     assert_eq!(sub.endpoint, "https://push.example.net/a");
     let (status, body) = call(&st, "GET", "/api/v1/push/config", Some(&key), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn another_members_endpoint_needs_the_same_keys(pool: PgPool) {
+    let hetzner = MockServer::start().await;
+    let st = state(pool.clone(), &hetzner.uri());
+    let (org, key) = org_with_key(&pool, "acme", Scope::Admin).await;
+    let colleague = common::user_with_password(
+        &pool,
+        org,
+        "colleague@example.com",
+        "a long test password",
+        "member",
+    )
+    .await;
+    let theirs = key_for(&pool, org, colleague).await;
+    let endpoint = "https://push.example.net/send/shared";
+    let (status, body) = call(
+        &st,
+        "POST",
+        "/api/v1/push/subscriptions",
+        Some(&key),
+        Some(subscription(endpoint, "Owner phone")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let id = body["subscription"]["id"].as_str().unwrap().to_owned();
+
+    // Knowing the endpoint is not enough to redirect the owner's device to other keys.
+    let other_keys = json!({ "endpoint": endpoint, "name": "x", "keys": {
+        "p256dh": "BP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8",
+        "auth": "AAAAAAAAAAAAAAAAAAAAAA" } });
+    let (status, body) = call(
+        &st,
+        "POST",
+        "/api/v1/push/subscriptions",
+        Some(&theirs),
+        Some(other_keys),
+    )
+    .await;
+    assert_eq!(
+        (status, body["error"]["code"].as_str()),
+        (StatusCode::CONFLICT, Some("endpoint_taken"))
+    );
+    let (_, body) = call(&st, "GET", "/api/v1/push/subscriptions", Some(&key), None).await;
+    assert_eq!(body["subscriptions"][0]["name"], "Owner phone");
+
+    // The same browser subscription (same keys) moves to the member who logs in on it.
+    let (status, body) = call(
+        &st,
+        "POST",
+        "/api/v1/push/subscriptions",
+        Some(&theirs),
+        Some(subscription(endpoint, "Shared tablet")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["subscription"]["id"], id.as_str());
+    let (_, body) = call(&st, "GET", "/api/v1/push/subscriptions", Some(&key), None).await;
+    assert_eq!(body["subscriptions"], json!([]));
+}
+
+#[sqlx::test(migrator = "hm_server::db::MIGRATOR")]
+async fn removed_or_disabled_members_get_no_push(pool: PgPool) {
+    let hetzner = MockServer::start().await;
+    mock_project(&hetzner, &[server_json(1, "web-1", "running")], &[]).await;
+    let st = state(pool.clone(), &hetzner.uri());
+    let (org, key) = org_with_key(&pool, "acme", Scope::Admin).await;
+    let owner = user_of_key(&pool, org).await;
+    let leaver = common::user_with_password(
+        &pool,
+        org,
+        "leaver@example.com",
+        "a long test password",
+        "member",
+    )
+    .await;
+    let disabled = common::user_with_password(
+        &pool,
+        org,
+        "off@example.com",
+        "a long test password",
+        "member",
+    )
+    .await;
+    let devices = push_service(201).await;
+    add_device(
+        &st,
+        org,
+        owner,
+        &format!("{}/owner", devices.uri()),
+        "Owner",
+    )
+    .await;
+    add_device(
+        &st,
+        org,
+        leaver,
+        &format!("{}/leaver", devices.uri()),
+        "Leaver",
+    )
+    .await;
+    add_device(&st, org, disabled, &format!("{}/off", devices.uri()), "Off").await;
+    let (status, body) = call(
+        &st,
+        "POST",
+        "/api/v1/projects",
+        Some(&key),
+        Some(json!({ "name": "prod", "token": common::TOKEN })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = call(
+        &st,
+        "POST",
+        "/api/v1/channels",
+        Some(&key),
+        Some(json!({ "type": "web_push", "name": "phones", "config": {} })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let channel = body["channel"]["id"].as_str().unwrap().to_owned();
+
+    // Disabled before the alert: no job for that device at all, and no channel test either.
+    sqlx::query("UPDATE users SET disabled_at = now() WHERE id = $1")
+        .bind(disabled)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, body) = call(
+        &st,
+        "POST",
+        &format!("/api/v1/channels/{channel}/test"),
+        Some(&key),
+        None,
+    )
+    .await;
+    let names: Vec<&str> = body["devices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Owner", "Leaver"]);
+
+    let t0 = OffsetDateTime::now_utc();
+    let at = |s: i64| t0 + Duration::seconds(s);
+    mock_project(&hetzner, &[server_json(1, "web-1", "off")], &[]).await;
+    scheduler::tick(&st, at(STEP)).await.unwrap();
+    scheduler::tick(&st, at(3 * STEP)).await.unwrap();
+    // Removed from the org after the jobs were queued: the queued job sends nothing.
+    sqlx::query("DELETE FROM memberships WHERE user_id = $1")
+        .bind(leaver)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = devices.received_requests().await.unwrap().len();
+    assert_eq!(notifier::run_once(&st, at(3 * STEP)).await.unwrap(), 2);
+    let sent: Vec<String> = devices.received_requests().await.unwrap()[before..]
+        .iter()
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert_eq!(sent, ["/owner"]);
+    let last_errors: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT last_error FROM notification_jobs WHERE push_subscription_id IS NOT NULL ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        last_errors,
+        [
+            None,
+            Some("device removed or its user is no longer active".to_owned())
+        ]
+    );
 }

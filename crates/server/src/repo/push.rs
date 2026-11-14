@@ -29,14 +29,34 @@ macro_rules! columns {
     };
 }
 
+/// A live subscription found by its endpoint: id, owner and sealed data.
+#[derive(Debug, sqlx::FromRow)]
+pub struct Existing {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub subscription_ct: Vec<u8>,
+    pub subscription_dek_ct: Vec<u8>,
+    pub key_version: i32,
+}
+
+impl Existing {
+    pub fn sealed(&self) -> Sealed {
+        Sealed {
+            secret_ct: self.subscription_ct.clone(),
+            dek_ct: self.subscription_dek_ct.clone(),
+            key_version: self.key_version,
+        }
+    }
+}
+
 /// The live subscription of this org with this endpoint hash, locked for an update.
 pub async fn find_by_endpoint(
     conn: &mut PgConnection,
     org: OrgId,
     endpoint_hash: &str,
-) -> Result<Option<Uuid>, sqlx::Error> {
-    sqlx::query_scalar(
-        "SELECT id FROM push_subscriptions
+) -> Result<Option<Existing>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, user_id, subscription_ct, subscription_dek_ct, key_version FROM push_subscriptions
          WHERE org_id = $1 AND endpoint_hash = $2 AND deleted_at IS NULL FOR UPDATE",
     )
     .bind(org.0)
@@ -199,6 +219,7 @@ pub async fn targets(
         "SELECT s.id, s.name, s.subscription_ct, s.subscription_dek_ct, s.key_version
          FROM push_subscriptions s
          JOIN memberships m ON m.org_id = s.org_id AND m.user_id = s.user_id
+         JOIN users u ON u.id = s.user_id AND u.disabled_at IS NULL
          WHERE s.org_id = $1 AND s.deleted_at IS NULL AND ($2::uuid[] IS NULL OR s.user_id = ANY($2))
          ORDER BY s.created_at, s.id",
     )

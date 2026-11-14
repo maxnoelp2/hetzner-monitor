@@ -1,5 +1,6 @@
 // Browser side of Web Push (ADR-0017): feature detection, permission, subscribing this browser
 // with the server's VAPID key, and remembering which server-side subscription is this device.
+import { api } from "./api/client";
 
 /** Why push cannot be used here, or "supported". */
 export type PushSupport = "supported" | "insecure" | "ios-not-installed" | "unsupported";
@@ -147,5 +148,25 @@ export function rememberDevice(id: string | null): void {
     else localStorage.removeItem(DEVICE_KEY);
   } catch {
     // Private mode or blocked storage: the device is just not marked as "this device".
+  }
+}
+
+/**
+ * Removes this browser's device on the server (while still logged in) and unsubscribes the
+ * browser. Best effort: called on logout, which must not fail because of it.
+ */
+export async function removeThisDevice(): Promise<void> {
+  const id = thisDevice();
+  if (!id) return;
+  rememberDevice(null);
+  try {
+    await api.DELETE("/api/v1/push/subscriptions/{id}", { params: { path: { id } } });
+  } catch {
+    // Offline or already gone: the push service drops it once the browser unsubscribes.
+  }
+  try {
+    if ("serviceWorker" in navigator) await unsubscribe();
+  } catch {
+    // Nothing more to do.
   }
 }

@@ -141,7 +141,7 @@ async fn deliver_push(state: &AppState, job: &Job, payload: &Payload) -> Result<
     let (Some(secret_ct), Some(dek_ct), Some(key_version)) =
         (&job.push_ct, &job.push_dek_ct, job.push_key_version)
     else {
-        return Err(permanent("device removed"));
+        return Err(permanent("device removed or its user is no longer active"));
     };
     let vapid = match state.push.vapid(&state.db, &state.keyring).await {
         Ok(v) => v,

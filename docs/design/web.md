@@ -160,7 +160,8 @@ Settings → **Push notifications** (code: `pages/Settings.tsx`, `push.ts`):
   browser with the VAPID key (`PushManager.subscribe`, `userVisibleOnly`; an old subscription for another key is
   replaced) and posts it with a name like `iPhone · Safari`. The returned id is kept in `localStorage`
   (`hm-push-subscription-id`) only to mark "This device"; nothing else about the subscription is stored by the UI.
-  "Send test push" and "Turn off" (server delete + browser unsubscribe) follow.
+  "Send test push" and "Turn off" (server delete + browser unsubscribe) follow. **Logout** does the same for this
+  device first (best effort), so a logged-out browser gets no more alerts.
 - When push is impossible the card says why instead: no secure context ("Push needs HTTPS", see the README), iPhone or
   iPad outside the home screen ("Add to Home Screen", iOS 16.4+), an unsupported browser, or blocked notifications.
 - **Your devices:** the caller's subscriptions with push service host, "Send test" and "Remove" (with confirmation). A

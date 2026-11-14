@@ -343,9 +343,9 @@ export interface paths {
         put?: never;
         /**
          * Subscribe this device. Scope: `write`.
-         * @description Idempotent per endpoint: registering a known endpoint again replaces its keys and name (and
-         *     moves it to the caller, if another member of the organisation had registered it) and
-         *     answers 200.
+         * @description Idempotent per endpoint: registering a known endpoint again replaces its keys and name and
+         *     answers 200. An endpoint another member registered moves to the caller only if the same keys
+         *     are presented (it is the same browser subscription); otherwise `409 endpoint_taken`.
          */
         post: operations["createPushSubscription"];
         delete?: never;
@@ -752,7 +752,7 @@ export interface components {
          * @description Implemented error codes.
          * @enum {string}
          */
-        ErrorCode: "unauthorized" | "invalid_credentials" | "forbidden" | "csrf_failed" | "wrong_password" | "too_many_attempts" | "not_found" | "bad_request" | "name_taken" | "sync_in_progress" | "default_rule" | "alert_resolved" | "invalid_token" | "email_disabled" | "push_disabled" | "hetzner_invalid_token" | "hetzner_unavailable" | "hetzner_rate_limited" | "internal";
+        ErrorCode: "unauthorized" | "invalid_credentials" | "forbidden" | "csrf_failed" | "wrong_password" | "too_many_attempts" | "not_found" | "bad_request" | "name_taken" | "sync_in_progress" | "default_rule" | "alert_resolved" | "invalid_token" | "email_disabled" | "push_disabled" | "endpoint_taken" | "hetzner_invalid_token" | "hetzner_unavailable" | "hetzner_rate_limited" | "internal";
         ErrorDetail: {
             code: components["schemas"]["ErrorCode"];
             /** @description Human-readable; never contains secrets. */
@@ -2109,6 +2109,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description Another member registered this endpoint with other keys (`endpoint_taken`) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description Web Push not configured (`push_disabled`) */
             422: {
                 headers: {
