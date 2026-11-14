@@ -75,7 +75,7 @@ Web Push is planned with the PWA (M6); the other five channels are implemented (
   lock (10 s timeout). Failures re-queue with backoff 30 s · 2ⁿ⁻¹ (max 1 h; a `429` `Retry-After` is used instead) up to
   8 attempts; 4xx and other permanent errors fail at once. Delivery is **at-least-once**. Finished jobs are kept 90 days.
 - **Messages:** title `FIRING|RESOLVED|STILL FIRING [severity] <rule>: <resource>`, body = alert message, project and a
-  link (`HM_BASE_URL/api/v1/alerts/{id}` when set). Slack: `{text}` (mrkdwn, escaped). Discord: `{content}` ≤ 2000 chars,
+  link (`HM_BASE_URL/alerts/{id}`, the alert in the web UI, when set). Slack: `{text}` (mrkdwn, escaped). Discord: `{content}` ≤ 2000 chars,
   mentions disabled. ntfy: JSON publish to the server root with `topic`, `title`, `message`, `priority` (critical 5,
   warning 4, else 3), `tags`, `click`; optional `Authorization: Bearer`. Email: plain text via SMTP.
 - **Native push** (APNs/FCM) arrives with the Tauri mobile app.
@@ -97,7 +97,7 @@ raw body, keyed with the channel secret>`. Verify the signature over the exact b
   "rule": { "id": "uuid", "name": "Server not running" },
   "project": { "id": "uuid", "name": "prod" },
   "resource": { "kind": "server", "hetzner_id": 1, "name": "web-1" },
-  "link": "https://hm.example.com/api/v1/alerts/uuid"
+  "link": "https://hm.example.com/alerts/uuid"
 }
 ```
 

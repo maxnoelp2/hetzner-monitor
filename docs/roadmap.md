@@ -14,6 +14,30 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone; a fresh install from the README works end to end (includes the M5 check the owner deferred) |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
+## M6 — in progress ([plan](plans/2026-11-13-m6-pwa-web-push.md), [ADR-0015](adr/0015-web-ui-embedded-in-binary.md), [ADR-0016](adr/0016-frontend-tooling.md))
+
+- M6a — web UI in the binary, session login:
+  - [ ] `web/` React + TypeScript PWA (Vite), embedded into the binary and served from `/` on the API's origin; client-side routing fallback to `index.html`, `/api/*` stays a JSON 404
+  - [ ] Strict CSP, `nosniff`, `Referrer-Policy: same-origin`; `immutable` hashed assets, `no-cache` for the rest; no third-party requests
+  - [ ] Login, session cookie, CSRF token in memory (re-read from `GET /me`), 401 returns to login, logout, password change
+  - [ ] Screens: alerts (filters, detail, ack), projects (connect, detail, inventory, sync), rules, channels (incl. test), silences, API keys, account
+  - [ ] API client generated from the OpenAPI document (`openapi-typescript`); CI fails on a stale generated file
+  - [ ] Owner's design system re-implemented in `web/` (dark-first, Geist, Lucide) plus tables, badges, empty and error states; usable at 375 px
+  - [ ] Installable PWA: `manifest.webmanifest`, service worker caching the app shell only
+  - [ ] Notification links point to `<HM_BASE_URL>/alerts/{id}`
+  - [ ] `cargo build` without Node still works (feature `web-ui`, placeholder page otherwise); Docker image and release enable it
+  - [ ] Tests: Rust integration tests for static serving and headers; Vitest + Testing Library for the API wrapper, login and alert ack
+  - [ ] CI `web` job (`npm ci`, typecheck, lint, test, build, generated-client check); Docker build with a Node stage
+- M6b — Web Push:
+  - [ ] VAPID key pair generated on first start, stored envelope-encrypted, covered by `keys status` / `keys rotate`; `HM_VAPID_SUBJECT`
+  - [ ] Push-subscription API per user and device (endpoint and keys sealed, SSRF-guarded `https://` endpoints)
+  - [ ] Channel type `web_push`, one notification job per subscription (per-device retries, `410 Gone`, delivery status)
+  - [ ] RFC 8291 / RFC 8292 sender in `hm-notify` with the RFC test vector
+  - [ ] Service worker shows notifications and opens `/alerts/{id}`; enable/test/remove push in the UI; iOS hint
+  - [ ] `POST /channels/{id}/test` for `web_push`
+  - [ ] Real check (owner): an alert from a test project arrives as a push on the owner's phone
+  - [ ] Real check (owner): a fresh install following only the README works end to end (includes the deferred M5 check)
+
 ## M5 — done (v0.1.0 released 2026-11-13)
 
 - M5a ([plan](plans/2026-11-12-m5a-auth-sessions-rotation.md), [ADR-0013](adr/0013-sessions-csrf-and-key-rotation.md)):

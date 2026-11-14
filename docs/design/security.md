@@ -1,6 +1,6 @@
 # Design: Security
 
-Status: encryption & auth **accepted** ([ADR-0005](../adr/0005-envelope-encryption-for-secrets.md), [ADR-0007](../adr/0007-auth-sessions-and-api-keys.md)); sessions, CSRF, throttling and key rotation **implemented** (M5a, [ADR-0013](../adr/0013-sessions-csrf-and-key-rotation.md))
+Status: encryption & auth **accepted** ([ADR-0005](../adr/0005-envelope-encryption-for-secrets.md), [ADR-0007](../adr/0007-auth-sessions-and-api-keys.md)); sessions, CSRF, throttling and key rotation **implemented** (M5a, [ADR-0013](../adr/0013-sessions-csrf-and-key-rotation.md)); web UI headers **implemented** (M6a, [ADR-0015](../adr/0015-web-ui-embedded-in-binary.md))
 
 ## Threat model (short)
 
@@ -54,6 +54,23 @@ Runbook (Docker Compose; keys go into `deploy/.env`, never into a shell history 
   can set one with an `admin` API key (`PUT /me/password`).
 - Login throttling (in-process, 15-minute window): 10 failures per e-mail or 30 per peer address → 429 `too_many_attempts`.
   `X-Forwarded-For` is not trusted, so behind a reverse proxy the address limit is shared. TOTP/OIDC after MVP.
+
+## Web UI
+
+Implemented in M6a ([ADR-0015](../adr/0015-web-ui-embedded-in-binary.md), [web](web.md#serving-and-headers)). The UI is
+served by the binary on the API's origin, so the `SameSite=Lax` cookie and the CSRF header work without CORS.
+
+- Every UI response carries `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self';
+  img-src 'self'; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none';
+  base-uri 'none'; form-action 'self'; frame-ancestors 'none'`, plus `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: same-origin`. No inline scripts or styles, no `eval`, no `data:` URLs; the app cannot be framed.
+- **No third-party requests:** fonts and icons are bundled; the UI talks only to its own origin.
+- The **CSRF token is kept in memory only** (never in `localStorage`, `sessionStorage` or a readable cookie) and is
+  re-read from `GET /me` after a reload. The session token itself stays in the `HttpOnly` cookie, out of reach of scripts.
+- A 401 clears the in-memory token and the cached data and returns to the login form.
+- The service worker caches only the app shell, never API responses, so no alert, project or channel data is stored by
+  the browser outside the page's memory.
+- Secrets are never displayed: Hetzner tokens and channel configs are write-only; a new API key is shown once.
 
 ## Authorization
 

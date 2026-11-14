@@ -4,13 +4,14 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M5 (v0.1.0)** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
+> Status: **M5 (v0.1.0), M6a in progress** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
 > forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
 > notifier, silences and ack are done; M5a: password login, server-side sessions with CSRF, versioned master keys and
 > `keys rotate` are done; M5b: the OpenAPI 3.1 document generated from the handlers and the release pipeline (multi-arch
-> image on GHCR, [ADR-0014](docs/adr/0014-release-and-versioning.md)) are done. Not yet: PWA and Web Push (M6).
-> Everything else below is the target design.
+> image on GHCR, [ADR-0014](docs/adr/0014-release-and-versioning.md)) are done. **M6a in progress:** the React PWA in
+> `web/`, embedded in the binary and served on the API's origin ([ADR-0015](docs/adr/0015-web-ui-embedded-in-binary.md),
+> [web](docs/design/web.md)). Not yet: Web Push (M6b). Everything else below is the target design.
 
 ## Bird's-eye view
 
@@ -20,7 +21,7 @@ against inventory snapshots and metric time series, manages alert state, and sen
 ```mermaid
 flowchart LR
   subgraph Binary["hetzner-monitor (one process)"]
-    API["HTTP API (Axum)<br/>/api/v1 + OpenAPI"]
+    API["HTTP API (Axum)<br/>/api/v1 + OpenAPI<br/>+ embedded web UI"]
     SCH["Scheduler<br/>(Tokio task per project)"]
     ENG["Rule engine<br/>+ alert lifecycle"]
     NOT["Notifier<br/>(queue + retry)"]
@@ -64,9 +65,10 @@ crates/
             secret envelope encryption, budget maths. Pure where possible → unit-testable without IO.
   notify/   [hm-notify] Channel adapters (email, slack, discord, webhook, ntfy; web push with M6) behind one `Notifier`.
   server/   [hm-server → bin `hetzner-monitor`] The binary: Axum API, auth (sessions + API keys), scheduler loop, notifier worker,
-            sqlx repositories, CLI subcommands (e.g. `keys rotate`), config loading.
+            sqlx repositories, CLI subcommands (e.g. `keys rotate`), config loading, serving the embedded web UI.
 migrations/ sqlx SQL migrations (source of truth for the schema).
-web/        React PWA (from M6).
+web/        React PWA (TypeScript, Vite; M6). Built to web/dist and embedded into the binary with rust-embed behind the
+            hm-server cargo feature `web-ui` (Docker image and releases enable it); served by the router's fallback.
 deploy/     docker-compose.yml (app + postgres) and deployment examples.
 docs/       Product, design, ADRs, research, plans.
 ```

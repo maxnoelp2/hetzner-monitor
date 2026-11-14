@@ -10,6 +10,28 @@ Upgrade by setting `HM_VERSION` in `.env` and running `docker compose pull && do
 
 ## [Unreleased]
 
+### Added
+
+- **Web UI:** a React PWA served by the binary on the same origin as the API (`http://127.0.0.1:8080/`). Log in with
+  e-mail and password; alerts (filters, detail with events and deliveries, ack), projects (connect, schedule, budget,
+  cost estimate, inventory, sync), rules (edit, enable/disable, custom rules), channels (create, edit, test, delete),
+  silences, API keys and password change. Installable as an app (manifest and a service worker that caches only the app
+  shell); push notifications follow in a later release.
+- Strict security headers on UI responses (Content Security Policy, `nosniff`, `Referrer-Policy: same-origin`); the UI
+  loads nothing from third-party hosts.
+- Cargo feature `web-ui` embeds the built UI; without it (plain `cargo build`) non-API paths show a placeholder page.
+  The Docker image and releases enable it.
+
+### Changed
+
+- Notification links now open the alert in the web UI: `<HM_BASE_URL>/alerts/{id}` instead of
+  `<HM_BASE_URL>/api/v1/alerts/{id}`. Nothing to do; scripts that followed the old link to fetch JSON should call
+  `GET /api/v1/alerts/{id}` with an API key instead.
+- `GET`/`HEAD` requests to paths outside `/api` that are not an API route (e.g. `/`, `/alerts`) now return the web UI
+  (or, in a binary built without it, a placeholder page) instead of an empty 404. Unknown paths under `/api` now return
+  the usual JSON error `404 not_found` instead of an empty body.
+- The self-hosting guide in the README now uses the web UI; the API commands remain as an alternative.
+
 ## [0.1.0] - 2026-11-12
 
 First release: a self-hostable server with the HTTP API. The web app (PWA) follows in a later release.

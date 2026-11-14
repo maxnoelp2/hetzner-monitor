@@ -6,6 +6,11 @@ REST under `/api/v1`, JSON. The OpenAPI 3.1 document is **generated from code** 
 served at `GET /api/v1/openapi.json` (unauthenticated) and printed by `hetzner-monitor openapi`; the PWA's TypeScript
 client is generated from it.
 
+The web UI is served from `/` (M6a, [web](web.md#serving-and-headers)): every `GET`/`HEAD` path that matches no route
+and is not under `/api` serves the embedded UI (an existing file, otherwise `index.html` for client-side routing). This
+is the router's fallback, not a route, so it is not part of the OpenAPI document. Unknown paths under `/api` (any
+method) and non-`GET`/`HEAD` requests outside `/api` get the JSON `404 not_found`; API clients never get HTML.
+
 ## OpenAPI
 
 - Every handler has a `#[utoipa::path]` with a unique camelCase `operationId` (`listProjects`, `createChannel`, …), a tag,

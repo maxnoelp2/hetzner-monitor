@@ -28,6 +28,10 @@ by `min_severity` or pinned rule channels, re-notify, `POST /alerts/{id}/ack`, s
 the token), `/me`, `PUT /me/password`, login throttling, Argon2id; `HM_MASTER_KEYS` + `keys status|rotate`, startup key check
 (ADR-0013). **M5b done, v0.1.0 released** (README real check deferred by owner until the web UI): OpenAPI 3.1 from code (`utoipa`, `/api/v1/openapi.json`, `hetzner-monitor openapi`), README
 self-hosting guide, Compose on the GHCR image, release workflow on `v*` tags, `CHANGELOG.md`, version 0.1.0 (ADR-0014).
+**M6a in progress** (branch `feat/m6a-web-ui`, [plan](docs/plans/2026-11-13-m6-pwa-web-push.md)): React PWA in `web/`
+(React 19, Vite, React Router, TanStack Query, client generated from the OpenAPI document), embedded into the binary with
+`rust-embed` behind the cargo feature `web-ui` and served by the router's fallback with a strict CSP (ADR-0015, ADR-0016,
+[docs/design/web.md](docs/design/web.md)); notification links point to `/alerts/{id}`. M6b (Web Push) follows.
 See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance criteria.
 
 ## Where things are
@@ -38,6 +42,7 @@ See [docs/roadmap.md](docs/roadmap.md) for milestones and their acceptance crite
 | Product scope, MVP features, non-goals | [docs/product.md](docs/product.md) |
 | Why a decision was made | [docs/adr/](docs/adr/README.md) |
 | Design of a subsystem | [docs/design/](docs/README.md#design) |
+| Web UI: structure, auth flow, serving, build | [docs/design/web.md](docs/design/web.md) |
 | Hetzner Cloud API facts and limits | [docs/research/hetzner-cloud-api.md](docs/research/hetzner-cloud-api.md) |
 | Terms (tier, budget, DEK, silence …) | [docs/glossary.md](docs/glossary.md) |
 | Work in progress / execution plans | [docs/plans/](docs/plans/README.md) |
@@ -69,9 +74,19 @@ scripts/smoke-m5a.sh                                       # login (HM_EMAIL, HM
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml run --rm app users reset-password --email <email>  # prints a new password once
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml run --rm app keys status   # or `keys rotate` (runbook: docs/design/security.md)
 python3 -I scripts/diag-pricing.py                         # read-only: why the cost estimate leaves resources unpriced (no names/IPs)
+
+# web UI (web/, Node 24 + npm)
+(cd web && npm ci)                                         # install dependencies
+(cd web && npm run typecheck && npm run lint && npm test && npm run build)   # tsc, ESLint + Prettier check, Vitest, build into web/dist
+cargo run -q -p hm-server -- openapi > openapi.json && (cd web && npm run gen:api)   # regenerate web/src/api/schema.d.ts after API changes (CI checks it)
+(cd web && npm run build) && cargo build --features web-ui # binary with the embedded UI
+(cd web && npm run dev)                                    # Vite on :5173, proxies /api to http://127.0.0.1:8080 (or HM_DEV_API); keeps running
 ```
 
 - Integration tests read `DATABASE_URL` (sqlx convention), the service reads `HM_DATABASE_URL`.
+- UI changes reach the binary only after `npm run build` in `web/` followed by `cargo build --features web-ui`; without the
+  feature (plain `cargo build`/`cargo test`) non-API paths serve a placeholder page. Never edit `web/src/api/schema.d.ts`
+  by hand — regenerate it. UI tests: Vitest next to the page (`web/src/pages/<Page>.test.tsx`) with `web/src/test/utils.tsx`.
 - New migrations: add `migrations/NNNN_description.sql`; they are embedded and applied on startup.
 - New endpoints: a handler with `#[utoipa::path]` (unique `operation_id`, tag, responses) returning typed `ToSchema`
   structs, registered with `routes!` in `api/mod.rs` — never plain `.route(` (tests/openapi.rs enforces it).

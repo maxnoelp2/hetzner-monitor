@@ -20,3 +20,7 @@
 | **DEK** | Data encryption key, random per secret-bearing row, encrypts the secret. |
 | **Master key** | Instance key (`HM_MASTER_KEY`) that encrypts DEKs. Versioned for rotation. |
 | **Envelope encryption** | Secret encrypted with a DEK, DEK encrypted with the master key. |
+| **PWA** | Progressive web app: the web UI (`web/`), installable from the browser like an app ([web](design/web.md)). |
+| **App shell** | The static files of the UI (`index.html`, scripts, styles, fonts, icons) — the only thing the service worker caches. |
+| **Service worker** | Browser script (`sw.js`) that runs beside the page: caches the app shell; receives Web Push messages (M6b). |
+| **CSP** | Content Security Policy: response header that limits where the UI may load code and data from (only its own origin). |
