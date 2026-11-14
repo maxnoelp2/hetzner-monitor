@@ -14,7 +14,7 @@ link the execution plan in `docs/plans/` that delivered them.
 | **M6** | React PWA incl. Web Push | An alert arrives as a push on a phone; a fresh install from the README works end to end (includes the M5 check the owner deferred) |
 | later | Tauri 2 mobile → Tauri 2 desktop → SaaS (multi-worker, KMS, billing) | |
 
-## M6 — in progress ([plan](plans/2026-11-13-m6-pwa-web-push.md), [ADR-0015](adr/0015-web-ui-embedded-in-binary.md), [ADR-0016](adr/0016-frontend-tooling.md))
+## M6 — in progress ([plan](plans/2026-11-13-m6-pwa-web-push.md), [ADR-0015](adr/0015-web-ui-embedded-in-binary.md), [ADR-0016](adr/0016-frontend-tooling.md), [ADR-0017](adr/0017-web-push.md))
 
 - M6a — web UI in the binary, session login:
   - [x] `web/` React + TypeScript PWA (Vite), embedded into the binary and served from `/` on the API's origin; client-side routing fallback to `index.html`, `/api/*` stays a JSON 404
@@ -29,12 +29,13 @@ link the execution plan in `docs/plans/` that delivered them.
   - [x] Tests: Rust integration tests for static serving and headers; Vitest + Testing Library for the API wrapper, login and alert ack
   - [x] CI `web` job (`npm ci`, typecheck, lint, test, build, generated-client check); Docker build with a Node stage
 - M6b — Web Push:
-  - [ ] VAPID key pair generated on first start, stored envelope-encrypted, covered by `keys status` / `keys rotate`; `HM_VAPID_SUBJECT`
-  - [ ] Push-subscription API per user and device (endpoint and keys sealed, SSRF-guarded `https://` endpoints)
-  - [ ] Channel type `web_push`, one notification job per subscription (per-device retries, `410 Gone`, delivery status)
-  - [ ] RFC 8291 / RFC 8292 sender in `hm-notify` with the RFC test vector
-  - [ ] Service worker shows notifications and opens `/alerts/{id}`; enable/test/remove push in the UI; iOS hint
-  - [ ] `POST /channels/{id}/test` for `web_push`
+  - [x] VAPID key pair generated on first start, stored envelope-encrypted, covered by `keys status` / `keys rotate`; `HM_VAPID_SUBJECT`
+  - [x] Push-subscription API per user and device (endpoint and keys sealed, SSRF-guarded `https://` endpoints)
+  - [x] Channel type `web_push`, one notification job per subscription (per-device retries, `410 Gone`, delivery status)
+  - [x] RFC 8291 / RFC 8292 sender in `hm-notify` with the RFC test vector
+  - [x] Service worker shows notifications and opens `/alerts/{id}`; enable/test/remove push in the UI; iOS hint
+  - [x] `POST /channels/{id}/test` for `web_push`
+  - [x] README: HTTPS via Tailscale Serve or a reverse proxy; push on the phone step by step
   - [ ] Real check (owner): an alert from a test project arrives as a push on the owner's phone
   - [ ] Real check (owner): a fresh install following only the README works end to end (includes the deferred M5 check)
 

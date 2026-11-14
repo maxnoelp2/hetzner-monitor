@@ -16,7 +16,7 @@ Source: `crates/server/src/config.rs`.
 | `HM_SMTP_TLS` | no | `starttls` | M4 | `starttls` (required) \| `tls` (implicit) \| `none` (local relays only) |
 | `HM_SMTP_PORT` | no | 587 / 465 / 25 | M4 | Default by `HM_SMTP_TLS` |
 | `HM_SMTP_USER` / `HM_SMTP_PASSWORD` | no (both or neither) | — | M4 | SMTP login; the password is never logged |
-| `HM_VAPID_SUBJECT` | for web push | `HM_BASE_URL` if `https://` | planned (M6b) | **Proposed:** VAPID contact (`mailto:` or `https:`); the VAPID key pair itself is generated on first start and stored encrypted, not configured ([plan](../plans/2026-11-13-m6-pwa-web-push.md)) |
+| `HM_VAPID_SUBJECT` | for Web Push | `HM_BASE_URL` if `https://` | M6b | VAPID contact (`mailto:…` or `https://…`) sent to push services; Apple requires one. Without it and without an `https://` `HM_BASE_URL`, Web Push is off (`422 push_disabled`). The VAPID key pair itself is generated on first start and stored encrypted, never configured ([ADR-0017](../adr/0017-web-push.md)) |
 | `HM_ALLOW_PRIVATE_TARGETS` | no | `true` | M4 | `false` refuses Slack/Discord/webhook/ntfy targets that resolve to private, loopback, link-local, CGNAT or metadata addresses ([security](security.md#outbound-requests-ssrf)) |
 | `HM_LOG` | no | `info` | M0 | `tracing` filter (`RUST_LOG` syntax) |
 
