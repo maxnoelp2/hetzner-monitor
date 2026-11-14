@@ -71,6 +71,40 @@ jobs:
         run: cargo run --locked -q -p hm-server -- openapi > openapi.json
       - name: Lint it (redocly.yaml, .redocly.lint-ignore.yaml)
         run: npx --yes @redocly/cli@2.77.0 lint openapi.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Regenerate the web API client from it
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm run gen:api
+      - name: The committed web client is current (ADR-0016)
+        run: |
+          if ! git diff --exit-code web/src/api/schema.d.ts; then
+            echo "::error file=web/src/api/schema.d.ts::web/src/api/schema.d.ts is out of date; regenerate with cargo run -q -p hm-server -- openapi > openapi.json && (cd web && npm run gen:api)"
+            exit 1
+          fi
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
 
   docker:
     runs-on: ubuntu-latest
