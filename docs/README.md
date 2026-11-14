@@ -26,6 +26,7 @@ truth for **behaviour**. When they disagree, fix one of them in the same PR.
 | [design/security.md](design/security.md) | Envelope encryption, auth, SSRF, redaction |
 | [design/api.md](design/api.md) | HTTP API surface |
 | [design/configuration.md](design/configuration.md) | `HM_*` environment variables |
+| [design/web.md](design/web.md) | Web UI (PWA): structure, routing, auth flow, serving and headers, service worker, build |
 
 ## Writing rules
 

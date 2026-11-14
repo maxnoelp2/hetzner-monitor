@@ -10,13 +10,13 @@ Source: `crates/server/src/config.rs`.
 | `HM_MASTER_KEYS` / `HM_MASTER_KEYS_FILE` | alternative to `HM_MASTER_KEY` | — | M5a | Versioned keys for rotation: `1:<b64>,2:<b64>` (versions 1–32767); the highest is used for new secrets ([rotation runbook](security.md#envelope-encryption-for-secrets-at-rest)) |
 | `HM_MODE` | no | `all` | M2 | `all` (API + scheduler) \| `api` (no scheduler) \| `worker` (scheduler; still serves `/healthz`, `/readyz`, API) |
 | `HM_BIND` | no | `0.0.0.0:8080` | M0 | HTTP listen address |
-| `HM_BASE_URL` | no | — | M4 | Public URL, `http(s)://…`; links in notifications (`<base>/api/v1/alerts/{id}`); `http://…` drops the `Secure` flag of the session cookie (M5a) |
+| `HM_BASE_URL` | no | — | M4 | Public URL, `http(s)://…`; links in notifications point to the web UI (`<base>/alerts/{id}`, M6a; before: `<base>/api/v1/alerts/{id}`); `http://…` drops the `Secure` flag of the session cookie (M5a) |
 | `HM_SMTP_HOST` | for email | — | M4 | SMTP server; unset = email channels unavailable (`422 email_disabled`) |
 | `HM_SMTP_FROM` | with `HM_SMTP_HOST` | — | M4 | Sender address, e.g. `hetzner-monitor <hm@example.com>` |
 | `HM_SMTP_TLS` | no | `starttls` | M4 | `starttls` (required) \| `tls` (implicit) \| `none` (local relays only) |
 | `HM_SMTP_PORT` | no | 587 / 465 / 25 | M4 | Default by `HM_SMTP_TLS` |
 | `HM_SMTP_USER` / `HM_SMTP_PASSWORD` | no (both or neither) | — | M4 | SMTP login; the password is never logged |
-| `HM_VAPID_PUBLIC_KEY` / `HM_VAPID_PRIVATE_KEY` | for web push | — | planned | Web Push keys |
+| `HM_VAPID_SUBJECT` | for web push | `HM_BASE_URL` if `https://` | planned (M6b) | **Proposed:** VAPID contact (`mailto:` or `https:`); the VAPID key pair itself is generated on first start and stored encrypted, not configured ([plan](../plans/2026-11-13-m6-pwa-web-push.md)) |
 | `HM_ALLOW_PRIVATE_TARGETS` | no | `true` | M4 | `false` refuses Slack/Discord/webhook/ntfy targets that resolve to private, loopback, link-local, CGNAT or metadata addresses ([security](security.md#outbound-requests-ssrf)) |
 | `HM_LOG` | no | `info` | M0 | `tracing` filter (`RUST_LOG` syntax) |
 
