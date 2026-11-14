@@ -9,7 +9,8 @@ shared in bug reports, webhook targets are attacker-controlled (SaaS). Protect t
 
 ## Envelope encryption for secrets at rest
 
-Applies to Hetzner tokens and notification channel configs (Slack/Discord webhook URLs are secrets too).
+Applies to Hetzner tokens, notification channel configs (Slack/Discord webhook URLs are secrets too), push
+subscriptions (endpoint and keys) and the installation's VAPID private key ([ADR-0017](../adr/0017-web-push.md)).
 
 1. Generate a random 256-bit **DEK** per row.
 2. `secret_ct = AES-256-GCM(DEK, nonce₁, secret, AAD = row id)`
@@ -71,6 +72,23 @@ served by the binary on the API's origin, so the `SameSite=Lax` cookie and the C
 - The service worker caches only the app shell, never API responses, so no alert, project or channel data is stored by
   the browser outside the page's memory.
 - Secrets are never displayed: Hetzner tokens and channel configs are write-only; a new API key is shown once.
+- Web Push (M6b): the browser's push subscription goes to the server once and is never read back; the UI keeps only the
+  server-side subscription id in `localStorage` (to mark "this device"). The service worker opens only same-origin
+  paths from a push message. Push and service workers require a secure context, so phones need HTTPS (README).
+
+## Web Push
+
+- **VAPID key:** one P-256 key pair per installation, generated on first use and stored in `vapid_keys`, sealed with
+  AAD = row id; `keys status|rotate` cover it. Only the public key leaves the server (`GET /push/config`). It is never
+  configured or logged. Deleting the row creates a new key on the next start and invalidates every subscription.
+- **Subscriptions:** endpoint (a capability: whoever has it can push to the device) and the `p256dh`/`auth` keys are
+  sealed as one JSON secret (AAD = subscription id). The API shows the push service host and a name only. A removed or
+  expired subscription keeps a tombstone without ciphertext (`deleted_at`) for the delivery history, purged after 90 days.
+- **Messages** are end-to-end encrypted for the browser (RFC 8291, a fresh ephemeral key and salt per message); the push
+  service sees only the ciphertext, `TTL`, `Urgency` and the VAPID token (12 h, `aud` = push service origin, `sub` =
+  `HM_VAPID_SUBJECT`). The payload holds what other channels show: title, alert message, project name and the alert path.
+- **Outbound:** pushes go through the same guarded HTTP client as webhooks (SSRF guard, no redirects, no proxy,
+  timeouts). `POST /push/subscriptions` accepts only `https://` endpoints; errors are short fixed strings.
 
 ## Authorization
 
@@ -78,7 +96,7 @@ Role per membership: `owner | admin | member`. Every handler resolves the caller
 
 ## Outbound requests (SSRF)
 
-Webhook/ntfy URLs are user-controlled. With `HM_ALLOW_PRIVATE_TARGETS=false` (to be the SaaS default) the notifier refuses
+Webhook/ntfy URLs and push subscription endpoints are user-controlled. With `HM_ALLOW_PRIVATE_TARGETS=false` (to be the SaaS default) the notifier refuses
 targets in private, loopback, link-local (incl. `169.254.169.254`), CGNAT, unspecified, multicast, reserved and
 unique-local ranges, also IPv4-mapped and NAT64 forms: IP literals are checked directly, host names through a DNS resolver
 that drops such addresses for every connection (so rebinding between check and connect does not help). Redirects are never
@@ -92,5 +110,6 @@ Implemented in `hm_notify::guard` (M4).
 - `tracing` fields for tokens/URLs/keys are redacted. Error messages never embed secrets.
 - Channel configs (`hm_notify::ChannelConfig`), `SmtpSettings` and the notifier print only their type; delivery errors are
   short fixed strings (`HTTP 404`, `timeout`, …) built without the URL, so `last_error` and the test endpoint never leak
-  a webhook URL, token, secret or recipient. Configs are sealed with AAD = channel id.
+  a webhook URL, token, secret or recipient. Configs are sealed with AAD = channel id. Push subscriptions and the
+  VAPID key print as `[REDACTED]` (`Subscription`, `Vapid` show no endpoint or private key).
 - Reported security issues: see [SECURITY.md](../../SECURITY.md).

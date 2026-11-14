@@ -1,8 +1,8 @@
 # Design: Web UI (PWA)
 
-Status: **implemented** (M6a, [plan](../plans/2026-11-13-m6-pwa-web-push.md)); Web Push **proposed** (M6b) ·
+Status: **implemented** (M6a, Web Push M6b, [plan](../plans/2026-11-13-m6-pwa-web-push.md)) ·
 Decisions: [ADR-0015](../adr/0015-web-ui-embedded-in-binary.md) (embedded in the binary),
-[ADR-0016](../adr/0016-frontend-tooling.md) (tooling) · Code: `web/`
+[ADR-0016](../adr/0016-frontend-tooling.md) (tooling), [ADR-0017](../adr/0017-web-push.md) (Web Push) · Code: `web/`
 
 The web UI is a React single-page app that the `hetzner-monitor` binary serves on the same origin as `/api/v1`. It uses
 only the public HTTP API ([api](api.md)); there are no UI-only endpoints.
@@ -24,6 +24,7 @@ web/
                         tests next to them (<Page>.test.tsx)
     ui/                 design tokens (tokens.css), component styles (ui.css), components.tsx, toast.tsx
     format.ts           labels, badge tones, date/duration/money formatting
+    push.ts             Web Push in the browser: support check, permission, subscribe, "this device" id
     test/               Vitest setup and helpers (mockFetch, renderApp)
   dist/                 build output, embedded into the binary (not committed)
 ```
@@ -42,7 +43,7 @@ Geist Mono from `@fontsource-variable` (bundled). npm with a committed `package-
 | `/rules` | rules: enable/disable, edit, create and delete custom rules |
 | `/channels` | channels: create/edit per type, send a test, delete |
 | `/silences` | active silences, create, end |
-| `/settings` | account (change password) and API keys (create, shown once; revoke) |
+| `/settings` | account (change password), push notifications (this device, your devices, test, remove) and API keys (create, shown once; revoke) |
 
 Any other path shows a "not found" page inside the app. Without a session every path renders the login form; after
 login the requested path is shown. Notification links point to `<HM_BASE_URL>/alerts/{id}`
@@ -67,7 +68,7 @@ login the requested path is shown. Notification links point to `<HM_BASE_URL>/al
 
 - Server state lives in TanStack Query; there is no other global state. Query keys: `["alerts", …]`, `["alert", id]`,
   `["projects"]`, `["project", id]`, `["resources", id, kind]`, `["rules", …]`, `["rule", id]`, `["channels"]`,
-  `["silences", …]`, `["api-keys"]`. Mutations invalidate the matching keys.
+  `["silences", …]`, `["api-keys"]`, `["push-config"]`, `["push-subscriptions"]`. Mutations invalidate the matching keys.
 - Queries are fresh for 15 s and refetch on window focus. Client errors (4xx) are not retried; others up to twice.
 - `unwrap(call)` returns the data or throws `ApiError(status, code, message)` with the server's error body
   ([api](api.md#conventions)); screens show `errorText(e)`.
@@ -143,8 +144,30 @@ so the CSP needs no `data:` or inline exceptions. Security notes: [security](sec
 - **API responses are never cached**: the worker does not touch requests under `/api`, so sessions, CSRF and alert
   state are always live and no alert, project or channel data is stored by the browser.
 - `start_url` is `/alerts`; installed apps open there.
-- Web Push (VAPID, push subscriptions, the `web_push` channel, `push` and `notificationclick` in the service worker)
-  follows in M6b.
+- **Push** (M6b, [ADR-0017](../adr/0017-web-push.md)): the `push` handler shows the decrypted message
+  `{title, body, tag, url, event, severity}` as a notification (app icon, one `tag` per alert with `renotify`, so a
+  resolve replaces the firing notification; critical alerts stay until dismissed). `notificationclick` focuses an open
+  window of the app and navigates it to the message's path (`/alerts/{id}`, `/settings` for tests), or opens one. Only
+  same-origin paths are used.
+
+## Web Push in the UI
+
+Settings → **Push notifications** (code: `pages/Settings.tsx`, `push.ts`):
+
+- `GET /push/config` says whether the server has Web Push (`HM_VAPID_SUBJECT` or an `https://` `HM_BASE_URL`) and
+  gives the VAPID public key. Without it the card explains the setting and shows nothing else.
+- **This device:** "Turn on push for this device" asks for the notification permission (from the click), subscribes the
+  browser with the VAPID key (`PushManager.subscribe`, `userVisibleOnly`; an old subscription for another key is
+  replaced) and posts it with a name like `iPhone · Safari`. The returned id is kept in `localStorage`
+  (`hm-push-subscription-id`) only to mark "This device"; nothing else about the subscription is stored by the UI.
+  "Send test push" and "Turn off" (server delete + browser unsubscribe) follow.
+- When push is impossible the card says why instead: no secure context ("Push needs HTTPS", see the README), iPhone or
+  iPad outside the home screen ("Add to Home Screen", iOS 16.4+), an unsupported browser, or blocked notifications.
+- **Your devices:** the caller's subscriptions with push service host, "Send test" and "Remove" (with confirmation). A
+  test that reports the device gone removes it from the list.
+- If the org has no `web_push` channel, the card links to the Channels page: alerts reach devices only through such a
+  channel. Channels → Add channel → type **Web Push** has no settings (every member's devices); its test lists the
+  result per device. Alert details show the device next to the channel for each push delivery.
 
 ## Development
 
@@ -172,5 +195,7 @@ include it.
   provides `mockFetch(handler)` (stubs `fetch`, records `{method, path, body, headers}`; unhandled requests answer a
   JSON 404) and `renderApp(<AppRoutes />, "/path")` (all providers and a `MemoryRouter`).
 - Covered at least: the API wrapper (CSRF header on non-GET, 401 returns to login) and the login and alert-ack flows.
+  Push (`pages/SettingsPush.test.tsx`) mocks the browser side (`push.ts`) and covers turning push on and off, blocked
+  permission, the unsupported cases, tests and removing a device.
 - Rust integration tests cover the serving rules: fallback to `index.html`, `/api` exclusion, security and cache
   headers, placeholder without the feature.

@@ -1,6 +1,6 @@
 # Design: Data model (PostgreSQL)
 
-Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples, channels, rule channels, notification jobs, silences, sessions **implemented** (`migrations/0001`–`0007`); push subscriptions **proposed**.
+Status: tenancy, API keys, projects, resources, rules, alerts, alert events, cost estimates, traffic samples, channels, rule channels, notification jobs, silences, sessions, VAPID key, push subscriptions **implemented** (`migrations/0001`–`0008`).
 Source of truth for implemented tables: `migrations/`.
 
 🔒 = envelope-encrypted ([security](security.md)). All timestamps are `timestamptz` (UTC).
@@ -64,14 +64,23 @@ silences(id uuid pk, org_id fk, project_id fk null, resource_id fk null, rule_id
          starts_at, ends_at /* > starts_at */, reason text, created_by fk null, created_at)
 
 -- notifications
-notification_channels(id uuid pk, org_id fk, type text /* email|slack|discord|webhook|ntfy */, name text /* unique per org, case-insensitive */,
+notification_channels(id uuid pk, org_id fk, type text /* email|slack|discord|webhook|ntfy|web_push */, name text /* unique per org, case-insensitive */,
                       config_ct bytea 🔒, config_dek_ct bytea 🔒, key_version int, hint text /* non-secret */,
-                      min_severity text default 'warning', enabled bool, created_at, updated_at)
+                      min_severity text default 'warning', enabled bool, created_at, updated_at,
+                      push_users uuid[] null /* web_push: copy of config.users, NULL = every member */)
 rule_channels(rule_id fk, channel_id fk, pk(rule_id, channel_id))
-notification_jobs(id bigserial pk, alert_event_id fk, channel_id fk, unique(alert_event_id, channel_id),
+notification_jobs(id bigserial pk, alert_event_id fk, channel_id fk, push_subscription_id fk null /* web_push: the device */,
+                  unique(alert_event_id, channel_id, push_subscription_id) nulls not distinct,
                   status text /* queued|sent|failed */, attempts int, next_attempt_at, last_error text /* redacted */,
                   created_at, finished_at)   -- finished jobs kept 90 days
-push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text, created_at)
+
+-- Web Push (ADR-0017)
+vapid_keys(id uuid pk, singleton bool unique /* one row */, private_ct bytea 🔒, private_dek_ct bytea 🔒, key_version int,
+           public_key text /* base64url */, created_at)
+push_subscriptions(id uuid pk, org_id fk, user_id fk, endpoint_hash text /* sha-256 hex; unique per org among live rows */,
+                   subscription_ct bytea 🔒 /* {endpoint, p256dh, auth} */, subscription_dek_ct bytea 🔒, key_version int,
+                   name text, host text /* push service host */, created_at, updated_at,
+                   deleted_at null /* tombstone: removed or gone, ciphertext wiped */)
 ```
 
 ## Notes
@@ -81,7 +90,9 @@ push_subscriptions(id uuid pk, user_id fk, endpoint text, p256dh text, auth text
   `hetzner-monitor users reset-password --email …` prints a new password and ends the user's sessions.
 - **Resources** have no `org_id`; they are tenant-scoped through `hetzner_projects.org_id` (every query joins it).
 - API keys are revoked by setting `revoked_at` (kept for audit), not deleted.
-- **Retention:** finished `notification_jobs` 90 days (hourly cleanup in the notifier); expired `sessions` are purged on login; `alert_events` retention is still proposed.
+- **Retention:** finished `notification_jobs` 90 days (hourly cleanup in the notifier, which also purges push-subscription tombstones older than 90 days); expired `sessions` are purged on login; `alert_events` retention is still proposed.
+- **`vapid_keys`** is per installation, not per tenant (one key pair signs for every org); **`push_subscriptions`** are
+  tenant data (`org_id`) owned by a user.
 - **No metric tables** (invariant 8). `cost_estimates` and `traffic_samples` hold derived daily readings Hetzner does not keep
   ([ADR-0011](../adr/0011-derived-daily-snapshots.md)); they are tenant-scoped through their project (`traffic_samples` via `resources`).
 - Enum-like `text` columns get `CHECK` constraints in migrations.

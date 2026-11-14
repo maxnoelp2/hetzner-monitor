@@ -1,10 +1,10 @@
 # Plan: M6 — React PWA with Web Push
 
-- Status: In progress (M6a)
+- Status: In progress (M6a done, M6b implemented; owner real checks open)
 - Milestone: M6 (split into **M6a** web UI and **M6b** Web Push, like M5)
 - Owner: agent (Claude), reviewed by the maintainer
 - Started: 2026-11-13
-- PR: <link once opened> (one PR per half; M6a may be split further if it grows past a reviewable size)
+- PR: M6a https://github.com/maxnoelp2/hetzner-monitor/pull/16 (merged); M6b on `feat/m6b-web-push`
 
 ## Goal
 
@@ -47,22 +47,22 @@ without any service other than the existing image and Postgres.
 
 ### M6b — Web Push
 
-- [ ] VAPID key pair (P-256) generated on first start and stored **envelope-encrypted** in the database (AAD = row id,
+- [x] VAPID key pair (P-256) generated on first start and stored **envelope-encrypted** in the database (AAD = row id,
       covered by `keys status` / `keys rotate`); no `HM_VAPID_*` key variables. `HM_VAPID_SUBJECT` (`mailto:` or
       `https:`), defaulting to `HM_BASE_URL` when that is `https://`.
-- [ ] Push-subscription API, per user and device: `GET /push/vapid-public-key`, `GET /push/subscriptions` (own devices),
+- [x] Push-subscription API, per user and device: `GET /push/vapid-public-key` (built as `GET /push/config`), `GET /push/subscriptions` (own devices),
       `POST /push/subscriptions {endpoint, keys: {p256dh, auth}, name?}` (idempotent per endpoint),
       `DELETE /push/subscriptions/{id}`. Endpoint and keys are envelope-encrypted; responses show only `name`, the push
       service host and timestamps. Endpoints must be `https://` and pass the SSRF guard.
-- [ ] New channel type `web_push`, config `{users?: [user_id]}` (omitted = every member of the org). At enqueue time
+- [x] New channel type `web_push`, config `{users?: [user_id]}` (omitted = every member of the org). At enqueue time
       (ADR-0012) a `web_push` channel fans out into **one job per subscription**, so retries, `410 Gone` (subscription
       deleted, job `failed` with `gone`) and delivery status are per device and visible in `GET /alerts/{id}`.
-- [ ] `hm-notify` sends Web Push itself: RFC 8291 (`aes128gcm` payload encryption), RFC 8292 (VAPID ES256 JWT), TTL and
+- [x] `hm-notify` sends Web Push itself: RFC 8291 (`aes128gcm` payload encryption), RFC 8292 (VAPID ES256 JWT), TTL and
       `Urgency` by severity, over the existing guarded `reqwest` client. Unit test against the RFC 8291 test vector.
-- [ ] Service worker shows the notification (title, text, severity tag, `renotify`) and opens `/alerts/{id}` on click;
+- [x] Service worker shows the notification (title, text, severity tag, `renotify`) and opens `/alerts/{id}` on click;
       the account page has "Enable push on this device" / "Send test push" / remove device. iOS: the UI explains that
       push needs "Add to Home Screen" (iOS 16.4+) and HTTPS.
-- [ ] `POST /channels/{id}/test` works for `web_push` (sends to every targeted device, reports per-device errors briefly).
+- [x] `POST /channels/{id}/test` works for `web_push` (sends to every targeted device, reports per-device errors briefly).
 - [ ] Real check (owner): an alert from a **test** project arrives as a push on the owner's phone, through the README
       install path (throwaway Compose project name and ports, HTTPS reachable from the phone).
 - [ ] Real check (owner): a fresh install following only the README works end to end, including the M5 check that was
@@ -70,7 +70,7 @@ without any service other than the existing image and Postgres.
 
 ### Both
 
-- [ ] Docs: README (UI-first guide, HTTPS for push and phones, reverse proxy), `docs/design/api.md`, `security.md`
+- [x] Docs: README (UI-first guide, HTTPS for push and phones, reverse proxy), `docs/design/api.md`, `security.md`
       (CSP, push secrets, VAPID), `configuration.md`, `data-model.md`, `alerting.md` (web_push fan-out),
       `ARCHITECTURE.md`, `CLAUDE.md` (commands, status), new `docs/design/web.md`, roadmap, CHANGELOG, ADRs below.
 
@@ -138,14 +138,14 @@ charts.
 
 ### M6b
 
-1. [ ] ADR-0017 (Proposed).
-2. [ ] Migration: `vapid_keys`, `push_subscriptions` (org_id, user_id, sealed endpoint/keys, name, host, timestamps),
+1. [x] ADR-0017 (Proposed).
+2. [x] Migration: `vapid_keys`, `push_subscriptions` (org_id, user_id, sealed endpoint/keys, name, host, timestamps),
        channel type `web_push`, `notification_jobs.push_subscription_id` + unique index; `keys status|rotate` cover the
        new tables.
-3. [ ] `hm-notify`: RFC 8291 encryption, VAPID JWT, sender; RFC test vector; payload rendering (≤ 3 KB).
-4. [ ] Server: VAPID key init at startup, push-subscription endpoints (OpenAPI), `web_push` channel validation, fan-out
+3. [x] `hm-notify`: RFC 8291 encryption, VAPID JWT, sender; RFC test vector; payload rendering (≤ 3 KB).
+4. [x] Server: VAPID key init at startup, push-subscription endpoints (OpenAPI), `web_push` channel validation, fan-out
        at enqueue, notifier handling of `410`/`404`, channel test.
-5. [ ] UI: enable/disable push on this device, device list, test push, iOS hint; service worker `push` and
+5. [x] UI: enable/disable push on this device, device list, test push, iOS hint; service worker `push` and
        `notificationclick`.
 6. [ ] Docs; real checks by the owner (push on the phone; fresh README install end to end); roadmap ticks.
 
@@ -161,7 +161,8 @@ charts.
 
 - **HTTPS for the phone.** Web Push and the service worker need a secure context; iOS needs the PWA added to the home
   screen. The owner needs an HTTPS URL reachable from the phone for the real check (own domain behind Caddy, Tailscale
-  `serve`, or a Cloudflare tunnel). **Owner: which one?**
+  `serve`, or a Cloudflare tunnel). **Decided 2026-11-14: Tailscale Serve** (README step 8 documents it next to a
+  reverse proxy).
 - **Design system in a public AGPL repo.** The plan copies token values and re-implements the components, without the
   logo, inside `web/`. **Owner: is that OK, or should the repo get only a neutral theme derived from it?**
 - UI language English (matches code/docs) — **owner: OK for M6?**
@@ -189,3 +190,20 @@ charts.
   in headless Chrome over CDP: registered, shell and hashed assets cached, the UI opens offline. Not checked: a real
   Hetzner project in the UI (no test token; part of the owner's M6b real check). The README now describes the UI flow
   of the next release; its `v0.1.0` download links are bumped by the release PR (ADR-0014).
+- 2026-11-14 — Owner: start M6b, HTTPS for the phone through Tailscale Serve. Branch `feat/m6b-web-push` from `main`
+  (M6a merged as PR #16). Implemented: ADR-0017; `hm-notify::push` (RFC 8291 `aes128gcm`, RFC 8292 VAPID with
+  `p256`/`hkdf`, RFC 8291 test vector reproduced byte for byte); migration 0008 (`vapid_keys`, `push_subscriptions`
+  with tombstones, `notification_channels.push_users`, `notification_jobs.push_subscription_id` with a `NULLS NOT
+  DISTINCT` unique index); `/push/config`, `/push/subscriptions` (+ `/{id}`, `/{id}/test`); `web_push` channel fan-out
+  per device in the alert transaction, `Gone` outcome removes the device; `keys status|rotate` cover both tables;
+  Settings → Push notifications, Web Push channel type, device column in deliveries, service worker `push` and
+  `notificationclick`; README step 8 (Tailscale Serve or reverse proxy) and step 9 (push on the phone). Decisions on
+  the way: `GET /push/config` (`{enabled, vapid_public_key?}`) instead of `/push/vapid-public-key`, so the UI can explain
+  a server without push; removed subscriptions stay as tombstones (ciphertext wiped) because a deleted row would take
+  its jobs' delivery history with it; `web_push` users are copied to a plain column so the fan-out needs no decryption;
+  the API accepts only `https://` endpoints, the sender also `http://` where private targets are allowed (tests).
+  Agent end-to-end check on a throwaway database and a local binary (no Compose, the owner's stack untouched): headless
+  Chrome subscribed through Google's push service (FCM), the channel test reached it (FCM accepted the VAPID token,
+  `201`), Chrome decrypted the message and the service worker showed the notification with the expected title, tag and
+  path; after the browser unsubscribed, FCM answered `410` and the server removed the device. Not checked: a real phone
+  (iOS/Android) and the click on a notification — part of the owner's real check.

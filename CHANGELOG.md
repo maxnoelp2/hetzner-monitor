@@ -16,7 +16,14 @@ Upgrade by setting `HM_VERSION` in `.env` and running `docker compose pull && do
   e-mail and password; alerts (filters, detail with events and deliveries, ack), projects (connect, schedule, budget,
   cost estimate, inventory, sync), rules (edit, enable/disable, custom rules), channels (create, edit, test, delete),
   silences, API keys and password change. Installable as an app (manifest and a service worker that caches only the app
-  shell); push notifications follow in a later release.
+  shell).
+- **Push notifications (Web Push):** new channel type `web_push` that sends an alert to every subscribed phone or
+  computer of the org's members (or of chosen users), one delivery per device with its own retries and status. Turn it
+  on per device under **Settings → Push notifications** (iPhone/iPad: add the app to the home screen first). Needs HTTPS
+  and `HM_VAPID_SUBJECT` or an `https://` `HM_BASE_URL`; the signing key is generated and stored encrypted
+  automatically and covered by `keys rotate`. New endpoints `GET /push/config`, `GET`/`POST /push/subscriptions`,
+  `DELETE /push/subscriptions/{id}`, `POST /push/subscriptions/{id}/test`; alert deliveries show the `device`.
+- README: HTTPS with Tailscale Serve (private, no domain) or a reverse proxy; push setup on phones.
 - Strict security headers on UI responses (Content Security Policy, `nosniff`, `Referrer-Policy: same-origin`); the UI
   loads nothing from third-party hosts.
 - Cargo feature `web-ui` embeds the built UI; without it (plain `cargo build`) non-API paths show a placeholder page.
