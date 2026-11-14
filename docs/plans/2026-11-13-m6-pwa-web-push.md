@@ -207,3 +207,6 @@ charts.
   `201`), Chrome decrypted the message and the service worker showed the notification with the expected title, tag and
   path; after the browser unsubscribed, FCM answered `410` and the server removed the device. Not checked: a real phone
   (iOS/Android) and the click on a notification — part of the owner's real check.
+- 2026-11-14 — M6b merged (PR #17). Release PR for v0.2.0 prepared (workspace and web version, Compose default,
+  README links and status, CHANGELOG section with upgrade notes); the owner pushes the tag `v0.2.0`, then runs the real
+  checks against the released image.

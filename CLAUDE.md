@@ -32,7 +32,7 @@ self-hosting guide, Compose on the GHCR image, release workflow on `v*` tags, `C
 (React 19, Vite, React Router, TanStack Query, client generated from the OpenAPI document), embedded into the binary with
 `rust-embed` behind the cargo feature `web-ui` and served by the router's fallback with a strict CSP (ADR-0015, ADR-0016,
 [docs/design/web.md](docs/design/web.md)); notification links point to `/alerts/{id}`.
-**M6b in progress** (branch `feat/m6b-web-push`, owner real checks open): Web Push (ADR-0017) — own RFC 8291/8292 code in
+**M6b done** (PR #17; release v0.2.0 prepared, owner real checks open): Web Push (ADR-0017) — own RFC 8291/8292 code in
 `hm-notify::push`, VAPID key generated and sealed in `vapid_keys`, `HM_VAPID_SUBJECT`, `/push/*` subscription API (per user
 and device, sealed, tombstones), channel type `web_push` fanned out into one job per device (`push_subscription_id`),
 `404`/`410` removes the device, service worker `push`/`notificationclick`, Settings → Push notifications. HTTPS for phones:

@@ -4,15 +4,15 @@ This document is the map of the codebase: what the parts are, how they talk, and
 invariants must hold. Details live in [docs/design/](docs/README.md#design); the reasons live in
 [docs/adr/](docs/adr/README.md).
 
-> Status: **M5 (v0.1.0), M6a in progress** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
+> Status: **M6 (v0.2.0 prepared; owner real checks open)** — API keys, encrypted tokens, `hcloud` client, scheduler (fast, inventory and metrics tiers, budget,
 > leases), rule engine, alert lifecycle, metric checks (M3a) and inventory, hygiene and cost checks with the traffic
 > forecast (M3b) are done; notifications (M4): channels email, Slack, Discord, webhook, ntfy, the durable queue and
 > notifier, silences and ack are done; M5a: password login, server-side sessions with CSRF, versioned master keys and
 > `keys rotate` are done; M5b: the OpenAPI 3.1 document generated from the handlers and the release pipeline (multi-arch
 > image on GHCR, [ADR-0014](docs/adr/0014-release-and-versioning.md)) are done. M6a: the React PWA in `web/`, embedded
 > in the binary and served on the API's origin ([ADR-0015](docs/adr/0015-web-ui-embedded-in-binary.md),
-> [web](docs/design/web.md)), is done. **M6b in progress:** Web Push — VAPID key, push subscriptions per device, the
-> `web_push` channel and service-worker notifications are implemented ([ADR-0017](docs/adr/0017-web-push.md)); the
+> [web](docs/design/web.md)), is done. M6b: Web Push — VAPID key, push subscriptions per device, the `web_push`
+> channel and service-worker notifications ([ADR-0017](docs/adr/0017-web-push.md)) — is done; release 0.2.0 and the
 > owner's real checks are open. Everything else below is the target design.
 
 ## Bird's-eye view

@@ -3,9 +3,8 @@
 Monitoring & alerting for **Hetzner Cloud** — paste a read-only API token, get meaningful alerts.
 No agent on your servers, no Prometheus stack.
 
-> **Status: 0.1.0** — the server and its HTTP API are usable and self-hostable. The web UI described in this guide is
-> in development and ships with the next release; the 0.1.0 image has no UI yet, so with it follow the **With the API**
-> instructions in each step (`curl` or any OpenAPI client). See the [changelog](CHANGELOG.md) and the
+> **Status: 0.2.0** — self-hostable server with a web UI (installable as an app) and push notifications to phones;
+> everything is also available through the HTTP API. See the [changelog](CHANGELOG.md) and the
 > [roadmap](docs/roadmap.md).
 
 ## Features
@@ -40,7 +39,7 @@ setup happens in the web UI; each step also shows how to do it **with the API** 
 
 ```bash
 mkdir -p ~/hetzner-monitor && cd ~/hetzner-monitor
-curl -fsSLO https://raw.githubusercontent.com/maxnoelp2/hetzner-monitor/v0.1.0/deploy/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/maxnoelp2/hetzner-monitor/v0.2.0/deploy/docker-compose.yml
 ```
 
 Create `.env` next to it with a generated master key and database password. Do this **before the first start** —
@@ -49,7 +48,7 @@ Postgres takes its password only when its volume is created.
 ```bash
 umask 077
 cat > .env <<EOF
-HM_VERSION=0.1.0
+HM_VERSION=0.2.0
 HM_MASTER_KEY=$(openssl rand -base64 32)
 HM_POSTGRES_PASSWORD=$(openssl rand -hex 24)
 # Public URL (links in notifications; http:// turns off the Secure flag of the login cookie):
@@ -228,8 +227,8 @@ Read the [changelog](CHANGELOG.md) for the target version (before 1.0, minor rel
 settings). Back up first, then:
 
 ```bash
-sed -i 's/^HM_VERSION=.*/HM_VERSION=0.1.1/' .env   # the version you upgrade to
-curl -fsSLO https://raw.githubusercontent.com/maxnoelp2/hetzner-monitor/v0.1.1/deploy/docker-compose.yml
+sed -i 's/^HM_VERSION=.*/HM_VERSION=0.2.1/' .env   # the version you upgrade to
+curl -fsSLO https://raw.githubusercontent.com/maxnoelp2/hetzner-monitor/v0.2.1/deploy/docker-compose.yml
 docker compose pull && docker compose up -d
 ```
 

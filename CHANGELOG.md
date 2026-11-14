@@ -10,6 +10,17 @@ Upgrade by setting `HM_VERSION` in `.env` and running `docker compose pull && do
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
+The web app: a web UI served by the same binary, installable as an app, and push notifications to phones and
+computers.
+
+**Upgrading from 0.1.0:** set `HM_VERSION=0.2.0` in `.env` and download the 0.2.0 `deploy/docker-compose.yml` (it passes
+the new `HM_VAPID_SUBJECT` through), then `docker compose pull && docker compose up -d`. Migrations `0008` (Web Push)
+run on startup. For phones and push, put the app behind HTTPS (README step 8: Tailscale Serve or a reverse proxy) and set
+`HM_BASE_URL` to that `https://` address (or `HM_VAPID_SUBJECT`, see the README). Notification links now open the web UI
+(see **Changed**).
+
 ### Added
 
 - **Web UI:** a React PWA served by the binary on the same origin as the API (`http://127.0.0.1:8080/`). Log in with
@@ -38,6 +49,13 @@ Upgrade by setting `HM_VERSION` in `.env` and running `docker compose pull && do
   (or, in a binary built without it, a placeholder page) instead of an empty 404. Unknown paths under `/api` now return
   the usual JSON error `404 not_found` instead of an empty body.
 - The self-hosting guide in the README now uses the web UI; the API commands remain as an alternative.
+
+### Known limitations
+
+- The Hetzner Cloud API has no RAM or disk-usage metrics; those need an agent (out of scope for now).
+- No user management in the UI yet (one owner from `bootstrap`; more users only through the database or a later
+  release). Metric graphs are not in the UI yet.
+- Push notifications need HTTPS; on iPhone and iPad (iOS 16.4+) only for the app added to the home screen.
 
 ## [0.1.0] - 2026-11-12
 
@@ -71,5 +89,6 @@ First release: a self-hostable server with the HTTP API. The web app (PWA) follo
 - The Hetzner Cloud API has no RAM or disk-usage metrics; those need an agent (out of scope for now).
 - The documented setup is one process (`HM_MODE=all`); separate `api` and `worker` processes are not documented yet.
 
-[Unreleased]: https://github.com/maxnoelp2/hetzner-monitor/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/maxnoelp2/hetzner-monitor/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/maxnoelp2/hetzner-monitor/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/maxnoelp2/hetzner-monitor/releases/tag/v0.1.0

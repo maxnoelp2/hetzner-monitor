@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "hm-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "hm-hcloud"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "reqwest",
  "rustls",
@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "hm-notify"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -1037,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "hm-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
