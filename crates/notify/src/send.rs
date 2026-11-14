@@ -18,6 +18,7 @@ use reqwest::{StatusCode, Url};
 use crate::config::ChannelConfig;
 use crate::guard::{self, Blocked};
 use crate::payload::Payload;
+use crate::push::{self, Subscription, Vapid};
 use crate::render;
 
 /// Timeout for one delivery attempt.
@@ -37,6 +38,10 @@ pub enum SendError {
     /// Retrying will not help (4xx, invalid target, permanent SMTP errors, email not configured).
     #[error("{reason}")]
     Permanent { reason: String },
+    /// Web Push: the subscription no longer exists (`404`/`410` from the push service). The
+    /// caller removes it; retrying will not help.
+    #[error("{reason}")]
+    Gone { reason: String },
 }
 
 impl SendError {
@@ -187,12 +192,63 @@ impl Notifier {
                 let headers: Vec<_> = auth.into_iter().collect();
                 self.post(&c.server, body, &headers).await
             }
+            // Sent per device with `send_push`; the server fans a channel out into subscriptions.
+            ChannelConfig::WebPush(_) => Err(SendError::permanent(
+                "web push is sent to each subscribed device",
+            )),
+        }
+    }
+
+    /// Sends `payload` to one push subscription (RFC 8030/8291/8292). `404`/`410` from the push
+    /// service become [`SendError::Gone`].
+    pub async fn send_push(
+        &self,
+        vapid: &Vapid,
+        subscription: &Subscription,
+        payload: &Payload,
+    ) -> Result<(), SendError> {
+        subscription
+            .validate(self.allow_private)
+            .map_err(|_| SendError::permanent("invalid push subscription"))?;
+        let url = Url::parse(&subscription.endpoint)
+            .map_err(|_| SendError::permanent("invalid push subscription"))?;
+        let message = push::Message::from_payload(payload).to_bytes();
+        let body = push::encrypt(subscription, &message)
+            .map_err(|_| SendError::permanent("push message could not be encrypted"))?;
+        let headers = [
+            ("Authorization", vapid.authorization(&url, push::unix_now())),
+            ("Content-Encoding", "aes128gcm".to_owned()),
+            ("TTL", push::ttl(payload).to_string()),
+            ("Urgency", push::urgency(payload).to_owned()),
+        ];
+        match self
+            .request(url.as_str(), "application/octet-stream", body, &headers)
+            .await
+        {
+            Err(SendError::Permanent { reason })
+                if reason == "HTTP 404" || reason == "HTTP 410" =>
+            {
+                Err(SendError::Gone {
+                    reason: format!("device unsubscribed ({reason})"),
+                })
+            }
+            other => other,
         }
     }
 
     async fn post(
         &self,
         url: &str,
+        body: Vec<u8>,
+        headers: &[(&str, String)],
+    ) -> Result<(), SendError> {
+        self.request(url, "application/json", body, headers).await
+    }
+
+    async fn request(
+        &self,
+        url: &str,
+        content_type: &str,
         body: Vec<u8>,
         headers: &[(&str, String)],
     ) -> Result<(), SendError> {
@@ -210,7 +266,7 @@ impl Notifier {
         let mut request = self
             .http
             .post(url)
-            .header(CONTENT_TYPE, "application/json")
+            .header(CONTENT_TYPE, content_type)
             .body(body);
         for (name, value) in headers {
             request = request.header(*name, value);
@@ -447,6 +503,57 @@ mod tests {
                 "{url}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn web_push_sends_an_encrypted_vapid_request() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/push/ok"))
+            .and(header("content-encoding", "aes128gcm"))
+            .and(header("content-type", "application/octet-stream"))
+            .and(header("ttl", "86400"))
+            .and(header("urgency", "high"))
+            .and(header_exists("authorization"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/push/gone"))
+            .respond_with(ResponseTemplate::new(410))
+            .mount(&server)
+            .await;
+        let n = Notifier::new(None, true).unwrap();
+        let vapid = Vapid::generate("mailto:ops@example.com").unwrap();
+        let sub = |p: &str| {
+            Subscription {
+            endpoint: format!("{}{p}", server.uri()),
+            p256dh: "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4".to_owned(),
+            auth: "BTBZMqHH6r4Tts7J_aSIgg".to_owned(),
+        }
+        };
+        let p = sample(Event::Fired);
+        n.send_push(&vapid, &sub("/push/ok"), &p).await.unwrap();
+        let received = &server.received_requests().await.unwrap()[0];
+        let auth = received.headers["authorization"].to_str().unwrap();
+        assert!(
+            auth.starts_with("vapid t=") && auth.ends_with(&format!(", k={}", vapid.public_key()))
+        );
+        // salt (16) + rs (4) + idlen (1) + key (65) + ciphertext with tag.
+        assert!(received.body.len() > 86 + 16);
+        assert_eq!(
+            n.send_push(&vapid, &sub("/push/gone"), &p).await,
+            Err(SendError::Gone {
+                reason: "device unsubscribed (HTTP 410)".to_owned()
+            })
+        );
+        // Plain http endpoints only where private targets are allowed (local test services).
+        let strict = Notifier::new(None, false).unwrap();
+        assert_eq!(
+            strict.send_push(&vapid, &sub("/push/ok"), &p).await,
+            Err(SendError::permanent("invalid push subscription"))
+        );
     }
 
     #[tokio::test]
