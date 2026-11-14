@@ -89,7 +89,8 @@ GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later gra
 - **Push subscriptions** (M6b): per user and device, scoped to the caller and the org (`read` to list, `write` to change;
   other users' and tenants' ids are `404`). `POST` takes `PushSubscription.toJSON()` plus a `name` (1–100 characters,
   default `Device`); `endpoint` must be `https://`; `p256dh` must be a P-256 point and `auth` 16 bytes (base64url).
-  Registering a known endpoint again (same org) replaces keys and name, moves it to the caller and answers `200`.
+  Registering a known endpoint again (same org) replaces keys and name and answers `200`; an endpoint another member
+  registered moves to the caller only with the same keys (same browser subscription), else `409 endpoint_taken`.
   Endpoint and keys are write-only (sealed); responses show `{id, name, host, created_at, updated_at}`. `DELETE`
   removes the device (tombstone, ciphertext wiped). Without a VAPID subject: `GET /push/config` → `{enabled: false}`,
   `POST` → `422 push_disabled`.
@@ -100,5 +101,5 @@ GET    /resources/{id}/metrics       → proxy to Hetzner metrics (for later gra
   (web_push: the device name, also after removal; else null), status (queued|sent|failed), attempts, last_error,
   next_attempt_at, finished_at}`; the alert shows `acked_at`, `acked_by`, `last_notified_at`.
 - Implemented error codes (schema `ErrorCode`): `unauthorized` (401), `invalid_credentials` (401, login), `forbidden` (403), `csrf_failed` (403), `wrong_password` (403), `too_many_attempts` (429), `not_found` (404, also for other tenants' ids and malformed ids),
-  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `alert_resolved` (409), `invalid_token` (422, connect), `email_disabled` (422), `push_disabled` (422), `hetzner_invalid_token` / `hetzner_unavailable` (502),
+  `bad_request` (400), `name_taken` (409), `sync_in_progress` (409), `default_rule` (409), `alert_resolved` (409), `invalid_token` (422, connect), `email_disabled` (422), `push_disabled` (422), `endpoint_taken` (409), `hetzner_invalid_token` / `hetzner_unavailable` (502),
   `hetzner_rate_limited` (503), `internal` (500).

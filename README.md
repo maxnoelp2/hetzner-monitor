@@ -218,9 +218,9 @@ automatically and stored encrypted, like the other secrets.
 3. **Settings** → **Push notifications** → **Turn on push for this device**, allow notifications, then **Send test
    push**. Tapping a notification opens the alert.
 
-Each phone or computer is a separate device in that list. **Remove** stops notifications to a device; devices that
-uninstalled the app or revoked the permission are removed automatically on the next notification. **Send test** on
-the Web Push channel reports the result per device.
+Each phone or computer is a separate device in that list. **Remove** (or logging out on the device) stops
+notifications to it; devices that uninstalled the app or revoked the permission are removed automatically on the next
+notification. **Send test** on the Web Push channel reports the result per device.
 
 ### Upgrading
 

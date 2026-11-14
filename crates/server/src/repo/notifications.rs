@@ -124,7 +124,9 @@ async fn insert_jobs(
              JOIN notification_channels c ON c.id = j.channel_id
              LEFT JOIN push_subscriptions s ON s.id = j.push_subscription_id
              WHERE e.alert_id = $2 AND e.type IN ('fired', 'renotified') AND c.enabled AND c.org_id = $4
-               AND (j.push_subscription_id IS NULL OR (s.deleted_at IS NULL AND s.org_id = $4))
+               AND (j.push_subscription_id IS NULL OR (s.deleted_at IS NULL AND s.org_id = $4 AND EXISTS (
+                        SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+                        WHERE m.org_id = s.org_id AND m.user_id = s.user_id AND u.disabled_at IS NULL)))
              ON CONFLICT DO NOTHING
              RETURNING channel_id",
         )
@@ -159,6 +161,7 @@ async fn insert_jobs(
              LEFT JOIN LATERAL (
                  SELECT s.id, s.created_at FROM push_subscriptions s
                  JOIN memberships m ON m.org_id = s.org_id AND m.user_id = s.user_id
+                 JOIN users u ON u.id = s.user_id AND u.disabled_at IS NULL
                  WHERE r.type = 'web_push' AND s.org_id = $1 AND s.deleted_at IS NULL
                    AND (r.push_users IS NULL OR s.user_id = ANY(r.push_users))
              ) s ON true
@@ -219,9 +222,9 @@ pub async fn claim_next(
 ) -> Result<Option<Job>, sqlx::Error> {
     sqlx::query_as(
         "SELECT j.id, j.attempts, j.channel_id, j.push_subscription_id,
-                CASE WHEN s.deleted_at IS NULL THEN s.subscription_ct END AS push_ct,
-                CASE WHEN s.deleted_at IS NULL THEN s.subscription_dek_ct END AS push_dek_ct,
-                CASE WHEN s.deleted_at IS NULL THEN s.key_version END AS push_key_version,
+                CASE WHEN s.deleted_at IS NULL AND active.ok THEN s.subscription_ct END AS push_ct,
+                CASE WHEN s.deleted_at IS NULL AND active.ok THEN s.subscription_dek_ct END AS push_dek_ct,
+                CASE WHEN s.deleted_at IS NULL AND active.ok THEN s.key_version END AS push_key_version,
                 c.type AS channel_type, c.enabled AS channel_enabled,
                 c.config_ct, c.config_dek_ct, c.key_version,
                 e.type AS event_type, e.at AS event_at, e.data AS event_data,
@@ -237,6 +240,11 @@ pub async fn claim_next(
          JOIN hetzner_projects p ON p.id = a.project_id AND p.org_id = c.org_id
          LEFT JOIN resources res ON res.id = a.resource_id
          LEFT JOIN push_subscriptions s ON s.id = j.push_subscription_id AND s.org_id = c.org_id
+         -- A device whose owner left the org or was disabled gets nothing more.
+         LEFT JOIN LATERAL (
+             SELECT EXISTS (SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id
+                            WHERE m.org_id = s.org_id AND m.user_id = s.user_id AND u.disabled_at IS NULL) AS ok
+         ) active ON true
          WHERE j.status = 'queued' AND j.next_attempt_at <= $1
          ORDER BY j.next_attempt_at, j.id
          LIMIT 1

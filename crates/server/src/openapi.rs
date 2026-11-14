@@ -114,6 +114,7 @@ pub enum ErrorCode {
     InvalidToken,
     EmailDisabled,
     PushDisabled,
+    EndpointTaken,
     HetznerInvalidToken,
     HetznerUnavailable,
     HetznerRateLimited,

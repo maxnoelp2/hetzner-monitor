@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { removeThisDevice } from "../push";
 import {
   api,
   ApiError,
@@ -64,6 +65,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
+      // A logged-out browser must not keep showing the user's alerts (shared devices).
+      await removeThisDevice();
       await unwrap(api.POST("/api/v1/auth/logout"));
     } finally {
       signedOut();

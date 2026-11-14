@@ -74,7 +74,7 @@ served by the binary on the API's origin, so the `SameSite=Lax` cookie and the C
 - Secrets are never displayed: Hetzner tokens and channel configs are write-only; a new API key is shown once.
 - Web Push (M6b): the browser's push subscription goes to the server once and is never read back; the UI keeps only the
   server-side subscription id in `localStorage` (to mark "this device"). The service worker opens only same-origin
-  paths from a push message. Push and service workers require a secure context, so phones need HTTPS (README).
+  paths from a push message (resolved against the origin, so `//host` or `/\host` cannot leave it). Push and service workers require a secure context, so phones need HTTPS (README).
 
 ## Web Push
 
@@ -88,7 +88,14 @@ served by the binary on the API's origin, so the `SameSite=Lax` cookie and the C
   service sees only the ciphertext, `TTL`, `Urgency` and the VAPID token (12 h, `aud` = push service origin, `sub` =
   `HM_VAPID_SUBJECT`). The payload holds what other channels show: title, alert message, project name and the alert path.
 - **Outbound:** pushes go through the same guarded HTTP client as webhooks (SSRF guard, no redirects, no proxy,
-  timeouts). `POST /push/subscriptions` accepts only `https://` endpoints; errors are short fixed strings.
+  timeouts). `POST /push/subscriptions` accepts only `https://` endpoints; errors are short fixed strings. Like
+  webhooks, the guard follows `HM_ALLOW_PRIVATE_TARGETS` (default `true` for self-hosting), so a member could point an
+  endpoint at an internal HTTPS host and read the status code from a test; set it to `false` on shared installations.
+- **Who receives:** only devices of active members (membership present, user not disabled), checked at fan-out and
+  again when a job is sent. Logging out in the UI removes the browser's device first, so a shared browser stops
+  showing the previous user's alerts. An endpoint registered by another member moves only when the same keys are
+  presented (the `auth` secret proves it is the same browser subscription); otherwise `409 endpoint_taken`, so knowing
+  an endpoint is not enough to redirect someone's notifications.
 
 ## Authorization
 
