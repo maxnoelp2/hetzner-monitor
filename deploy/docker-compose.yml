@@ -25,7 +25,7 @@ services:
 
   app:
     # Pinned release; upgrade by changing HM_VERSION (CHANGELOG.md lists what changed).
-    image: ghcr.io/maxnoelp2/hetzner-monitor:${HM_VERSION:-0.1.0}
+    image: ghcr.io/maxnoelp2/hetzner-monitor:${HM_VERSION:-0.2.0}
     environment:
       HM_DATABASE_URL: postgres://hetzner_monitor:${HM_POSTGRES_PASSWORD:-hetzner_monitor}@postgres:5432/hetzner_monitor
       # Required — the app refuses to start without it. How to generate one: see deploy/.env.example
