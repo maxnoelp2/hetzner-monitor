@@ -14,7 +14,9 @@ pub const NTFY_DEFAULT_SERVER: &str = "https://ntfy.sh";
 pub const MAX_RECIPIENTS: usize = 20;
 
 /// The channel types.
-pub const KINDS: [&str; 5] = ["email", "slack", "discord", "webhook", "ntfy"];
+pub const KINDS: [&str; 6] = ["email", "slack", "discord", "webhook", "ntfy", "web_push"];
+/// Most users one `web_push` channel can name.
+pub const MAX_PUSH_USERS: usize = 100;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +48,15 @@ pub struct Ntfy {
     pub token: Option<String>,
 }
 
+/// `web_push`: the devices of these users (omitted: every member of the org). The server sends
+/// one message per push subscription; the config itself holds no secret.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebPush {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub users: Option<Vec<uuid::Uuid>>,
+}
+
 fn default_ntfy_server() -> String {
     NTFY_DEFAULT_SERVER.to_owned()
 }
@@ -58,6 +69,7 @@ pub enum ChannelConfig {
     Discord(Hook),
     Webhook(Webhook),
     Ntfy(Ntfy),
+    WebPush(WebPush),
 }
 
 /// Why a configuration was rejected. Never contains the secret values themselves.
@@ -91,6 +103,7 @@ impl ChannelConfig {
             "discord" => Self::Discord(parse(kind, config)?),
             "webhook" => Self::Webhook(parse(kind, config)?),
             "ntfy" => Self::Ntfy(parse(kind, config)?),
+            "web_push" => Self::WebPush(parse(kind, config)?),
             other => {
                 return Err(invalid(format!(
                     "type must be one of {}, got `{other}`",
@@ -109,6 +122,7 @@ impl ChannelConfig {
             Self::Discord(_) => "discord",
             Self::Webhook(_) => "webhook",
             Self::Ntfy(_) => "ntfy",
+            Self::WebPush(_) => "web_push",
         }
     }
 
@@ -119,11 +133,12 @@ impl ChannelConfig {
             Self::Slack(c) | Self::Discord(c) => serde_json::to_value(c),
             Self::Webhook(c) => serde_json::to_value(c),
             Self::Ntfy(c) => serde_json::to_value(c),
+            Self::WebPush(c) => serde_json::to_value(c),
         };
         v.unwrap_or(Value::Null)
     }
 
-    /// A non-secret description for the API: the target host or the recipient count.
+    /// A non-secret description for the API: the target host, the recipient or user count.
     pub fn hint(&self) -> String {
         match self {
             Self::Email(c) => match c.to.len() {
@@ -133,13 +148,26 @@ impl ChannelConfig {
             Self::Slack(c) | Self::Discord(c) => host(&c.url),
             Self::Webhook(c) => host(&c.url),
             Self::Ntfy(c) => host(&c.server),
+            Self::WebPush(c) => match c.users.as_ref().map(Vec::len) {
+                None => "all members".to_owned(),
+                Some(1) => "1 user".to_owned(),
+                Some(n) => format!("{n} users"),
+            },
         }
     }
 
-    /// The HTTP target URL (none for email).
+    /// The users a `web_push` channel targets (`None`: every member; also for other types).
+    pub fn push_users(&self) -> Option<&[uuid::Uuid]> {
+        match self {
+            Self::WebPush(c) => c.users.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The HTTP target URL (none for email and Web Push).
     pub fn url(&self) -> Option<&str> {
         match self {
-            Self::Email(_) => None,
+            Self::Email(_) | Self::WebPush(_) => None,
             Self::Slack(c) | Self::Discord(c) => Some(&c.url),
             Self::Webhook(c) => Some(&c.url),
             Self::Ntfy(c) => Some(&c.server),
@@ -187,6 +215,17 @@ impl ChannelConfig {
                 }
                 Ok(())
             }
+            Self::WebPush(c) => match &c.users {
+                Some(users) if users.is_empty() || users.len() > MAX_PUSH_USERS => {
+                    Err(invalid(format!(
+                        "web_push config: `users` needs 1 to {MAX_PUSH_USERS} user ids (omit it for every member)"
+                    )))
+                }
+                Some(users) if (1..users.len()).any(|i| users[..i].contains(&users[i])) => {
+                    Err(invalid("web_push config: `users` lists a user twice"))
+                }
+                _ => Ok(()),
+            },
         }
     }
 }
@@ -253,6 +292,17 @@ mod tests {
         // Round trip through the stored JSON.
         let again = ChannelConfig::from_parts("webhook", &hook.to_json()).unwrap();
         assert_eq!(again.hint(), "example.com");
+
+        let all = ChannelConfig::from_parts("web_push", &json!({})).unwrap();
+        assert_eq!(
+            (all.hint(), all.push_users(), all.url()),
+            ("all members".to_owned(), None, None)
+        );
+        assert_eq!(all.to_json(), json!({}));
+        let id = "6f1c0b8e-2a44-4c1e-9b8e-0d3f5a7c9e11";
+        let some = ChannelConfig::from_parts("web_push", &json!({ "users": [id] })).unwrap();
+        assert_eq!(some.hint(), "1 user");
+        assert_eq!(some.push_users().unwrap()[0].to_string(), id);
     }
 
     #[test]
@@ -269,6 +319,12 @@ mod tests {
             ("email", json!({ "to": [] })),
             ("email", json!({ "to": ["nope"] })),
             ("email", json!({ "to": ["a@example.com"], "cc": ["x"] })),
+            ("web_push", json!({ "users": [] })),
+            ("web_push", json!({ "users": ["sekrit"] })),
+            (
+                "web_push",
+                json!({ "users": ["6f1c0b8e-2a44-4c1e-9b8e-0d3f5a7c9e11", "6f1c0b8e-2a44-4c1e-9b8e-0d3f5a7c9e11"] }),
+            ),
             ("pager", json!({})),
         ];
         for (kind, cfg) in cases {
