@@ -37,6 +37,12 @@ tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+# Embeds web/dist (feature `web-ui`, ADR-0015).
+rust-embed = { workspace = true, optional = true }
+
+[features]
+# Serve the React PWA from web/dist (build it first: `npm ci && npm run build` in web/).
+web-ui = ["dep:rust-embed"]
 
 [dev-dependencies]
 http-body-util.workspace = true

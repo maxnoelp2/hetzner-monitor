@@ -19,3 +19,4 @@ pub mod repo;
 pub mod scheduler;
 pub mod telemetry;
 pub mod throttle;
+pub mod web;

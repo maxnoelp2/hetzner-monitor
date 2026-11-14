@@ -281,7 +281,7 @@ async fn firing_and_resolved_are_delivered_signed(pool: PgPool) {
     assert_eq!(fired["alert"]["severity"], "critical");
     assert_eq!(fired["alert"]["message"], "server web-1 (1) is off");
     assert_eq!(fired["resource"]["name"], "web-1");
-    assert_eq!(fired["link"], format!("https://hm.test/api/v1/alerts/{id}"));
+    assert_eq!(fired["link"], format!("https://hm.test/alerts/{id}"));
 
     env.power_on(4).await;
     assert_eq!(env.deliver(400).await, 1);

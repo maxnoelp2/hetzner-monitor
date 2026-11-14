@@ -55,6 +55,8 @@ pub fn router(state: AppState) -> Router {
     crate::openapi::finish(&mut doc);
     let doc = Arc::new(doc);
     router
+        // Everything no route matched: the web UI, or the JSON 404 under `/api` (ADR-0015, `web.rs`).
+        .fallback(crate::web::fallback)
         .layer(Extension(doc))
         .layer(TraceLayer::new_for_http())
         .with_state(state)

@@ -100,7 +100,7 @@ mod tests {
         let text = slack(&p)["text"].as_str().unwrap().to_owned();
         assert!(text.starts_with("*FIRING [critical] Server not running: server web-1*\n"));
         assert!(text.contains("a &lt; b &amp; c"));
-        assert!(text.ends_with("<https://hm.example/api/v1/alerts/a1|Open alert>"));
+        assert!(text.ends_with("<https://hm.example/alerts/a1|Open alert>"));
     }
 
     #[test]
@@ -122,7 +122,7 @@ mod tests {
             (v["priority"].clone(), v["tags"][0].clone()),
             (json!(5), json!("rotating_light"))
         );
-        assert_eq!(v["click"], "https://hm.example/api/v1/alerts/a1");
+        assert_eq!(v["click"], "https://hm.example/alerts/a1");
         assert_eq!(ntfy(&sample(Event::Resolved), "t")["priority"], 3);
     }
 
