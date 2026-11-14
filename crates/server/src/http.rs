@@ -29,6 +29,8 @@ pub struct AppState {
     pub base_url: Option<Arc<str>>,
     /// Failed-login counters (in-process).
     pub login_throttle: Arc<crate::throttle::LoginThrottle>,
+    /// Web Push: VAPID subject and the cached key pair (ADR-0017).
+    pub push: crate::push::PushState,
 }
 
 /// All routes with their OpenAPI description. Routes are registered **only** here and in

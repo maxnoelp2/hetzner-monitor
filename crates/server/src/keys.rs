@@ -48,23 +48,33 @@ impl Status {
     }
 }
 
-/// Counts sealed rows per table and key version.
+/// The tables holding sealed secrets.
+pub const TABLES: [&str; 4] = [
+    "hetzner_projects",
+    "notification_channels",
+    "push_subscriptions",
+    "vapid_keys",
+];
+
+/// Counts sealed rows per table and key version (removed push subscriptions hold no secret).
 pub async fn status(db: &PgPool) -> Result<Status, sqlx::Error> {
     let rows: Vec<(String, i32, i64)> = sqlx::query_as(
         "SELECT 'hetzner_projects', key_version, count(*) FROM hetzner_projects GROUP BY key_version
          UNION ALL
-         SELECT 'notification_channels', key_version, count(*) FROM notification_channels GROUP BY key_version",
+         SELECT 'notification_channels', key_version, count(*) FROM notification_channels GROUP BY key_version
+         UNION ALL
+         SELECT 'push_subscriptions', key_version, count(*) FROM push_subscriptions
+             WHERE deleted_at IS NULL GROUP BY key_version
+         UNION ALL
+         SELECT 'vapid_keys', key_version, count(*) FROM vapid_keys GROUP BY key_version",
     )
     .fetch_all(db)
     .await?;
     let mut status = Status::default();
     for (table, version, count) in rows {
-        let table = if table == "hetzner_projects" {
-            "hetzner_projects"
-        } else {
-            "notification_channels"
-        };
-        status.rows.insert((table, version), count);
+        if let Some(table) = TABLES.into_iter().find(|t| *t == table) {
+            status.rows.insert((table, version), count);
+        }
     }
     Ok(status)
 }
@@ -88,6 +98,8 @@ pub async fn check_versions(db: &PgPool, keys: &Keyring) -> Result<(), KeysError
 pub struct Rotated {
     pub projects: u64,
     pub channels: u64,
+    pub push_subscriptions: u64,
+    pub vapid_keys: u64,
 }
 
 /// Re-wraps every DEK not on the current version. Idempotent; a row changed concurrently
@@ -97,6 +109,8 @@ pub async fn rotate(db: &PgPool, keys: &Keyring) -> Result<Rotated, KeysError> {
     Ok(Rotated {
         projects: rotate_projects(db, keys).await?,
         channels: rotate_channels(db, keys).await?,
+        push_subscriptions: rotate_push_subscriptions(db, keys).await?,
+        vapid_keys: rotate_vapid_keys(db, keys).await?,
     })
 }
 
@@ -118,70 +132,82 @@ fn rewrap(
     Ok((id, key_version, new))
 }
 
-async fn rotate_projects(db: &PgPool, keys: &Keyring) -> Result<u64, KeysError> {
-    let current = keys.current_version();
-    let mut done = 0;
-    loop {
-        let mut tx = db.begin().await?;
-        let rows: Vec<Row> = sqlx::query_as(
-            "SELECT id, token_ct, token_dek_ct, key_version FROM hetzner_projects
-             WHERE key_version <> $1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED",
-        )
-        .bind(current)
-        .bind(BATCH)
-        .fetch_all(&mut *tx)
-        .await?;
-        if rows.is_empty() {
-            return Ok(done);
+/// One re-wrap function per table (sqlx needs literal queries). `$live` limits the rows that
+/// hold a secret.
+macro_rules! rotate_table {
+    ($fn:ident, $table:literal, $ct:literal, $dek:literal, $live:literal) => {
+        async fn $fn(db: &PgPool, keys: &Keyring) -> Result<u64, KeysError> {
+            let current = keys.current_version();
+            let mut done = 0;
+            loop {
+                let mut tx = db.begin().await?;
+                let rows: Vec<Row> = sqlx::query_as(concat!(
+                    "SELECT id, ",
+                    $ct,
+                    ", ",
+                    $dek,
+                    ", key_version FROM ",
+                    $table,
+                    " WHERE key_version <> $1",
+                    $live,
+                    " ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED"
+                ))
+                .bind(current)
+                .bind(BATCH)
+                .fetch_all(&mut *tx)
+                .await?;
+                if rows.is_empty() {
+                    return Ok(done);
+                }
+                for row in rows {
+                    let (id, old, new) = rewrap(keys, $table, row)?;
+                    done += sqlx::query(concat!(
+                        "UPDATE ",
+                        $table,
+                        " SET ",
+                        $dek,
+                        " = $3, key_version = $4
+                         WHERE id = $1 AND key_version = $2"
+                    ))
+                    .bind(id)
+                    .bind(old)
+                    .bind(&new.dek_ct)
+                    .bind(new.key_version)
+                    .execute(&mut *tx)
+                    .await?
+                    .rows_affected();
+                }
+                tx.commit().await?;
+            }
         }
-        for row in rows {
-            let (id, old, new) = rewrap(keys, "hetzner_projects", row)?;
-            done += sqlx::query(
-                "UPDATE hetzner_projects SET token_dek_ct = $3, key_version = $4
-                 WHERE id = $1 AND key_version = $2",
-            )
-            .bind(id)
-            .bind(old)
-            .bind(&new.dek_ct)
-            .bind(new.key_version)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        }
-        tx.commit().await?;
-    }
+    };
 }
 
-async fn rotate_channels(db: &PgPool, keys: &Keyring) -> Result<u64, KeysError> {
-    let current = keys.current_version();
-    let mut done = 0;
-    loop {
-        let mut tx = db.begin().await?;
-        let rows: Vec<Row> = sqlx::query_as(
-            "SELECT id, config_ct, config_dek_ct, key_version FROM notification_channels
-             WHERE key_version <> $1 ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED",
-        )
-        .bind(current)
-        .bind(BATCH)
-        .fetch_all(&mut *tx)
-        .await?;
-        if rows.is_empty() {
-            return Ok(done);
-        }
-        for row in rows {
-            let (id, old, new) = rewrap(keys, "notification_channels", row)?;
-            done += sqlx::query(
-                "UPDATE notification_channels SET config_dek_ct = $3, key_version = $4
-                 WHERE id = $1 AND key_version = $2",
-            )
-            .bind(id)
-            .bind(old)
-            .bind(&new.dek_ct)
-            .bind(new.key_version)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        }
-        tx.commit().await?;
-    }
-}
+rotate_table!(
+    rotate_projects,
+    "hetzner_projects",
+    "token_ct",
+    "token_dek_ct",
+    ""
+);
+rotate_table!(
+    rotate_channels,
+    "notification_channels",
+    "config_ct",
+    "config_dek_ct",
+    ""
+);
+rotate_table!(
+    rotate_push_subscriptions,
+    "push_subscriptions",
+    "subscription_ct",
+    "subscription_dek_ct",
+    " AND deleted_at IS NULL"
+);
+rotate_table!(
+    rotate_vapid_keys,
+    "vapid_keys",
+    "private_ct",
+    "private_dek_ct",
+    ""
+);

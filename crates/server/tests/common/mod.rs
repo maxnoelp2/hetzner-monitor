@@ -40,6 +40,7 @@ pub fn state_with_mail(db: PgPool, hcloud_base: &str) -> (AppState, hm_notify::S
         notifier,
         base_url: Some(Arc::from("https://hm.test")),
         login_throttle: Arc::default(),
+        push: hm_server::push::PushState::new(Some("mailto:ops@hm.test")),
     };
     (state, mail)
 }

@@ -87,7 +87,7 @@ fn document_is_valid_openapi_31() {
             "{id}: no responses"
         );
     }
-    assert_eq!(ids.len(), 33, "operations: {ids:?}");
+    assert_eq!(ids.len(), 38, "operations: {ids:?}");
 
     for scheme in ["api_key", "session", "csrf"] {
         assert!(

@@ -5,13 +5,16 @@
 //! notifier's [`notifications::claim_next`], which joins channel and alert on the same tenant,
 //! the session lookup by token hash and the login lookup by e-mail (both before the tenant is
 //! known, both return it), user-wide session and password functions (a password belongs to the
-//! user, not to one org), and the operator tools in [`crate::keys`] and the `users` CLI.
+//! user, not to one org), the notifier's [`push::mark_gone`] and [`push::purge`] (system tasks on
+//! rows of a claimed job or on tombstones), the VAPID key in [`crate::push`] (one per
+//! installation), and the operator tools in [`crate::keys`] and the `users` CLI.
 
 pub mod alerts;
 pub mod api_keys;
 pub mod channels;
 pub mod notifications;
 pub mod projects;
+pub mod push;
 pub mod resources;
 pub mod rules;
 pub mod sessions;

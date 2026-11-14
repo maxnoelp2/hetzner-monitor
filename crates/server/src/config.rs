@@ -63,6 +63,9 @@ pub struct Config {
     pub base_url: Option<String>,
     /// Whether webhook-style targets may resolve to private addresses (`HM_ALLOW_PRIVATE_TARGETS`).
     pub allow_private_targets: bool,
+    /// VAPID contact for Web Push (`HM_VAPID_SUBJECT`, else an `https://` `HM_BASE_URL`);
+    /// `None` = Web Push unavailable.
+    pub vapid_subject: Option<String>,
 }
 
 impl Config {
@@ -88,6 +91,8 @@ impl Config {
             })?,
             None => Mode::All,
         };
+        let base_url = base_url_from_lookup(&lookup)?;
+        let vapid_subject = vapid_subject_from_lookup(&lookup, base_url.as_deref())?;
         Ok(Self {
             database_url,
             keyring: Arc::new(keyring_from_lookup(&lookup, &read_file)?),
@@ -95,8 +100,9 @@ impl Config {
             log: lookup("HM_LOG").unwrap_or_else(|| DEFAULT_LOG.to_owned()),
             mode,
             smtp: smtp_from_lookup(&lookup)?,
-            base_url: base_url_from_lookup(&lookup)?,
+            base_url,
             allow_private_targets: bool_from_lookup(&lookup, "HM_ALLOW_PRIVATE_TARGETS", true)?,
+            vapid_subject,
         })
     }
 }
@@ -165,6 +171,24 @@ fn base_url_from_lookup(
         });
     }
     Ok(Some(raw.trim_end_matches('/').to_owned()))
+}
+
+/// `HM_VAPID_SUBJECT` (`mailto:` or `https://`); without it an `https://` base URL is used.
+/// Push services (Apple's in particular) reject VAPID tokens without a usable `sub`.
+fn vapid_subject_from_lookup(
+    lookup: &impl Fn(&str) -> Option<String>,
+    base_url: Option<&str>,
+) -> Result<Option<String>, ConfigError> {
+    match non_empty(lookup, "HM_VAPID_SUBJECT") {
+        Some(raw) if raw.starts_with("https://") || raw.starts_with("mailto:") => Ok(Some(raw)),
+        Some(raw) => Err(ConfigError::Invalid {
+            var: "HM_VAPID_SUBJECT",
+            reason: format!("`{raw}` must start with mailto: or https://"),
+        }),
+        None => Ok(base_url
+            .filter(|u| u.starts_with("https://"))
+            .map(str::to_owned)),
+    }
 }
 
 fn bool_from_lookup(
@@ -395,6 +419,7 @@ mod tests {
     fn notification_settings() {
         let config = load(&[("HM_DATABASE_URL", "x")]).unwrap();
         assert!(config.smtp.is_none() && config.base_url.is_none() && config.allow_private_targets);
+        assert!(config.vapid_subject.is_none());
 
         let config = load(&[
             ("HM_DATABASE_URL", "x"),
@@ -413,6 +438,37 @@ mod tests {
         assert!(!format!("{smtp:?}").contains("pw with space"));
         assert_eq!(config.base_url.as_deref(), Some("https://hm.example.com"));
         assert!(!config.allow_private_targets);
+        assert_eq!(
+            config.vapid_subject.as_deref(),
+            Some("https://hm.example.com")
+        );
+
+        let config = load(&[
+            ("HM_DATABASE_URL", "x"),
+            ("HM_BASE_URL", "http://127.0.0.1:8080"),
+        ])
+        .unwrap();
+        assert!(config.vapid_subject.is_none());
+        let config = load(&[
+            ("HM_DATABASE_URL", "x"),
+            ("HM_BASE_URL", "http://127.0.0.1:8080"),
+            ("HM_VAPID_SUBJECT", "mailto:ops@example.com"),
+        ])
+        .unwrap();
+        assert_eq!(
+            config.vapid_subject.as_deref(),
+            Some("mailto:ops@example.com")
+        );
+        assert!(matches!(
+            load(&[
+                ("HM_DATABASE_URL", "x"),
+                ("HM_VAPID_SUBJECT", "ops@example.com")
+            ]),
+            Err(ConfigError::Invalid {
+                var: "HM_VAPID_SUBJECT",
+                ..
+            })
+        ));
 
         for (vars, var) in [
             (vec![("HM_SMTP_HOST", "h")], "HM_SMTP_FROM"),

@@ -41,6 +41,8 @@ pub struct NewChannel<'a> {
     pub hint: &'a str,
     pub min_severity: &'a str,
     pub enabled: bool,
+    /// `web_push`: the targeted users (`None`: every member).
+    pub push_users: Option<&'a [Uuid]>,
 }
 
 pub async fn insert(
@@ -51,8 +53,8 @@ pub async fn insert(
 ) -> Result<ChannelView, sqlx::Error> {
     sqlx::query_as(concat!(
         "INSERT INTO notification_channels (id, org_id, type, name, config_ct, config_dek_ct, key_version,
-                                            hint, min_severity, enabled, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+                                            hint, min_severity, enabled, created_at, updated_at, push_users)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12)
          RETURNING ",
         columns!()
     ))
@@ -67,6 +69,7 @@ pub async fn insert(
     .bind(c.min_severity)
     .bind(c.enabled)
     .bind(now)
+    .bind(c.push_users)
     .fetch_one(db)
     .await
 }
@@ -125,8 +128,8 @@ pub struct Patch<'a> {
     pub name: Option<&'a str>,
     pub min_severity: Option<&'a str>,
     pub enabled: Option<bool>,
-    /// A new config replaces the old one completely.
-    pub config: Option<(&'a Sealed, &'a str)>,
+    /// A new config replaces the old one completely: sealed config, hint, `web_push` users.
+    pub config: Option<(&'a Sealed, &'a str, Option<&'a [Uuid]>)>,
 }
 
 pub async fn update(
@@ -136,14 +139,15 @@ pub async fn update(
     patch: &Patch<'_>,
     now: OffsetDateTime,
 ) -> Result<Option<ChannelView>, sqlx::Error> {
-    let (ct, dek, version, hint) = match patch.config {
-        Some((sealed, hint)) => (
+    let (ct, dek, version, hint, users) = match patch.config {
+        Some((sealed, hint, users)) => (
             Some(sealed.secret_ct.as_slice()),
             Some(sealed.dek_ct.as_slice()),
             Some(sealed.key_version),
             Some(hint),
+            users,
         ),
-        None => (None, None, None, None),
+        None => (None, None, None, None, None),
     };
     sqlx::query_as(concat!(
         "UPDATE notification_channels SET
@@ -154,6 +158,7 @@ pub async fn update(
              config_dek_ct = coalesce($7, config_dek_ct),
              key_version = coalesce($8, key_version),
              hint = coalesce($9, hint),
+             push_users = CASE WHEN $6::bytea IS NULL THEN push_users ELSE $11 END,
              updated_at = $10
          WHERE org_id = $1 AND id = $2
          RETURNING ",
@@ -169,6 +174,7 @@ pub async fn update(
     .bind(version)
     .bind(hint)
     .bind(now)
+    .bind(users)
     .fetch_optional(&mut *conn)
     .await
 }
