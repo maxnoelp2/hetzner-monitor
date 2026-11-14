@@ -131,6 +131,68 @@ describe("ChannelsPage", () => {
     expect(await within(dialog).findByText(/HM_SMTP_HOST/)).toBeInTheDocument();
   });
 
+  it("creates a Web Push channel without config and reports tests per device", async () => {
+    const user = userEvent.setup();
+    const PUSH = { ...HOOK, id: "c3", name: "Phones", type: "web_push", hint: "all members" };
+    const calls = api((c) => {
+      if (c.method === "POST" && c.path === "/api/v1/channels")
+        return { status: 201, body: { channel: PUSH } };
+      if (c.method === "GET" && c.path === "/api/v1/channels")
+        return { body: { channels: [PUSH] } };
+      if (c.path === "/api/v1/channels/c3/test")
+        return {
+          body: {
+            ok: false,
+            error: "1 of 2 devices failed",
+            devices: [
+              { id: "s1", name: "Pixel", ok: true },
+              { id: "s2", name: "Old iPad", ok: false, error: "device unsubscribed (HTTP 410)" },
+            ],
+          },
+        };
+      return undefined;
+    });
+    renderApp(<AppRoutes />, "/channels");
+    await screen.findByText("Phones");
+
+    await user.click(screen.getByRole("button", { name: "Add channel" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Type"), "web_push");
+    expect(within(dialog).getByText(/every device a member of the org/)).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Name"), "Phones");
+    await user.click(within(dialog).getByRole("button", { name: "Add channel" }));
+    await screen.findByText("Channel added");
+    const post = calls.find((c) => c.method === "POST" && c.path === "/api/v1/channels");
+    expect(post?.body).toMatchObject({ type: "web_push", name: "Phones", config: {} });
+
+    const row = screen
+      .getAllByText("Phones")
+      .map((el) => el.closest("tr"))
+      .find(Boolean)!;
+    expect(within(row).getByText("Web Push")).toBeInTheDocument();
+    await user.click(within(row).getByRole("button", { name: /test/i }));
+    expect(
+      await screen.findByText("Pixel: sent; Old iPad: device unsubscribed (HTTP 410)"),
+    ).toBeInTheDocument();
+  });
+
+  it("explains push_disabled", async () => {
+    const user = userEvent.setup();
+    api((c) =>
+      c.method === "POST" && c.path === "/api/v1/channels"
+        ? { status: 422, body: { error: { code: "push_disabled", message: "no vapid" } } }
+        : undefined,
+    );
+    renderApp(<AppRoutes />, "/channels");
+    await screen.findByText("Ops hook");
+    await user.click(screen.getByRole("button", { name: "Add channel" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Type"), "web_push");
+    await user.type(within(dialog).getByLabelText("Name"), "Phones");
+    await user.click(within(dialog).getByRole("button", { name: "Add channel" }));
+    expect(await within(dialog).findByText(/HM_VAPID_SUBJECT/)).toBeInTheDocument();
+  });
+
   it("shows the error toast when a test fails", async () => {
     const user = userEvent.setup();
     const calls = api((c) =>

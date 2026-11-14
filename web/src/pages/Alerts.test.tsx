@@ -177,6 +177,7 @@ describe("AlertDetailPage", () => {
           alert_event_id: 2,
           channel_id: "c1",
           channel_name: "Ops Discord",
+          device: null,
           status: "failed",
           attempts: 3,
           next_attempt_at: "2026-11-13T09:02:00Z",

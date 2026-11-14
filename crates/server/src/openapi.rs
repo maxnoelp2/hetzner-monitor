@@ -34,12 +34,24 @@ const REQUEST_SCHEMAS: &[&str] = &[
     "UrlConfig",
     "WebhookConfig",
     "NtfyConfig",
+    "WebPushConfig",
+    "CreatePushSubscription",
+    "SubscriptionKeys",
     "CreateSilence",
     "CreateKey",
 ];
 
 /// Response fields left out when `None` (`#[serde(skip_serializing_if)]`), as `schema.field`.
-const SPARSE_FIELDS: &[&str] = &["Health.reason", "TestResult.error", "TestResult.retryable"];
+const SPARSE_FIELDS: &[&str] = &[
+    "Health.reason",
+    "TestResult.error",
+    "TestResult.retryable",
+    "TestResult.devices",
+    "DeviceResult.error",
+    "PushConfig.vapid_public_key",
+    "PushTestResult.error",
+    "PushTestResult.gone",
+];
 
 /// Top-level document; paths are added by the router.
 #[derive(utoipa::OpenApi)]

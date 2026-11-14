@@ -13,9 +13,11 @@ import {
   Plus,
   RefreshCw,
   Send,
+  Smartphone,
   Trash,
   Webhook,
 } from "lucide-react";
+import { Link } from "react-router";
 import type { LucideIcon } from "lucide-react";
 import { api, ApiError, errorText, unwrap, type Schemas } from "../api/client";
 import { SEVERITIES, severityTone, type Severity } from "../format";
@@ -45,6 +47,7 @@ const TYPE_INFO: Record<ChannelType, { label: string; icon: LucideIcon }> = {
   discord: { label: "Discord", icon: MessageSquare },
   webhook: { label: "Webhook", icon: Webhook },
   ntfy: { label: "ntfy", icon: Bell },
+  web_push: { label: "Web Push", icon: Smartphone },
 };
 
 const TYPES = (Object.keys(TYPE_INFO) as ChannelType[]).map((type) => ({
@@ -145,6 +148,9 @@ function buildConfig(
       if (d.token) config.token = d.token;
       return { config };
     }
+    case "web_push":
+      // Every member's subscribed devices; nothing to configure here.
+      return { config: {} };
   }
 }
 
@@ -152,6 +158,11 @@ function buildConfig(
 function saveError(err: unknown): { name?: string; form?: string } {
   if (err instanceof ApiError) {
     if (err.code === "name_taken") return { name: "Another channel already has this name." };
+    if (err.code === "push_disabled") {
+      return {
+        form: "Web Push is not set up on this server. It needs HM_VAPID_SUBJECT or an https:// HM_BASE_URL; see the README.",
+      };
+    }
     if (err.code === "email_disabled") {
       return {
         form: "Email is not set up on this server. Set HM_SMTP_HOST (and the other HM_SMTP_* settings) on the server and restart it, or pick another channel type.",
@@ -186,7 +197,8 @@ export function ChannelsPage() {
     body = (
       <Empty title="No channels yet" icon={<Send size={24} strokeWidth={1.5} />}>
         <p className="muted small">
-          Add a channel to get alerts by email, Slack, Discord, a signed webhook or ntfy.
+          Add a channel to get alerts by email, Slack, Discord, a signed webhook, ntfy or as a push
+          notification on your devices.
         </p>
       </Empty>
     );
@@ -295,7 +307,18 @@ function ChannelRow({
     mutationFn: () =>
       unwrap(api.POST("/api/v1/channels/{id}/test", { params: { path: { id: channel.id } } })),
     onSuccess: (result) => {
-      if (result.ok) {
+      const devices = result.devices;
+      if (devices && devices.length > 0) {
+        const failed = devices.filter((d) => !d.ok);
+        const summary = devices
+          .map((d) => (d.ok ? `${d.name}: sent` : `${d.name}: ${d.error ?? "failed"}`))
+          .join("; ");
+        notify(
+          failed.length === 0 ? "success" : "danger",
+          failed.length === 0 ? "Test sent" : "Test failed",
+          summary,
+        );
+      } else if (result.ok) {
         notify("success", "Test sent", channel.name);
       } else {
         const error = result.error ?? "Unknown error";
@@ -474,6 +497,13 @@ function ConfigFields({
             </div>
           </div>
         </>
+      );
+    case "web_push":
+      return (
+        <p className="small muted">
+          Sends a push notification to every device a member of the org has turned push on for. Each
+          person does that on their phone or computer under <Link to="/settings">Settings</Link>.
+        </p>
       );
     case "ntfy":
       return (
@@ -672,18 +702,20 @@ function EditChannelForm({ channel, onDone }: { channel: Channel; onDone: () => 
       />
       <SeverityField value={minSeverity} onChange={setMinSeverity} />
       <Switch checked={enabled} onChange={setEnabled} label="Enabled" />
-      <Switch
-        checked={replace}
-        onChange={(v) => {
-          setReplace(v);
-          // Turning it off drops whatever was typed, secrets included.
-          if (!v) {
-            setDraft(EMPTY_CONFIG);
-            setErrors({});
-          }
-        }}
-        label="Replace configuration"
-      />
+      {channel.type !== "web_push" && (
+        <Switch
+          checked={replace}
+          onChange={(v) => {
+            setReplace(v);
+            // Turning it off drops whatever was typed, secrets included.
+            if (!v) {
+              setDraft(EMPTY_CONFIG);
+              setErrors({});
+            }
+          }}
+          label="Replace configuration"
+        />
+      )}
       {replace && (
         <>
           <p className="small muted">
