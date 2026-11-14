@@ -225,7 +225,7 @@ pub(crate) mod tests {
                 hetzner_id: 1,
                 name: "web-1".to_owned(),
             }),
-            link: Some("https://hm.example/api/v1/alerts/a1".to_owned()),
+            link: Some("https://hm.example/alerts/a1".to_owned()),
         }
     }
 
@@ -238,7 +238,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             p.text(),
-            "server web-1 (1) is off\nProject: prod\nhttps://hm.example/api/v1/alerts/a1"
+            "server web-1 (1) is off\nProject: prod\nhttps://hm.example/alerts/a1"
         );
         assert_eq!(
             sample(Event::Renotified).title(),

@@ -191,6 +191,6 @@ fn payload(state: &AppState, job: &Job) -> Result<Payload, String> {
         link: state
             .base_url
             .as_ref()
-            .map(|base| format!("{base}/api/v1/alerts/{}", job.alert_id)),
+            .map(|base| format!("{base}/alerts/{}", job.alert_id)),
     })
 }
