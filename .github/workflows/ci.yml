@@ -59,6 +59,17 @@ jobs:
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all --locked
+      # The embedded-UI tests need web/dist; without it they skip.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build the web UI
+        working-directory: web
+        run: npm ci && npm run build
+      - name: Serve the embedded UI (feature web-ui)
+        run: cargo test -p hm-server --features web-ui --locked --test web
 
   openapi:
     runs-on: ubuntu-latest
