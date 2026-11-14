@@ -51,6 +51,8 @@ const auth: Middleware = {
 export const api = createClient<paths>({
   baseUrl: typeof window === "undefined" ? "http://localhost" : window.location.origin,
   credentials: "same-origin",
+  // Resolve `fetch` per call, so tests can stub the global after this module is loaded.
+  fetch: (request: Request) => globalThis.fetch(request),
 });
 api.use(auth);
 
