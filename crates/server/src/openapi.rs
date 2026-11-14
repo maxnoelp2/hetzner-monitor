@@ -62,6 +62,7 @@ const SPARSE_FIELDS: &[&str] = &["Health.reason", "TestResult.error", "TestResul
         (name = "alerts", description = "Alerts and their history"),
         (name = "channels", description = "Notification channels"),
         (name = "silences", description = "Suppress notifications for a scope and time window"),
+        (name = "push", description = "Web Push: VAPID key and this user's push subscriptions (devices)"),
         (name = "api-keys", description = "API keys for headless use"),
         (name = "system", description = "Health and the API description"),
     )
@@ -100,6 +101,7 @@ pub enum ErrorCode {
     AlertResolved,
     InvalidToken,
     EmailDisabled,
+    PushDisabled,
     HetznerInvalidToken,
     HetznerUnavailable,
     HetznerRateLimited,
@@ -187,6 +189,7 @@ pub mod enums {
         Discord,
         Webhook,
         Ntfy,
+        WebPush,
     }
 
     #[derive(Serialize, ToSchema)]

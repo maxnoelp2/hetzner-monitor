@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use hm_core::crypto::MasterKey;
 use hm_server::config::{self, Config, Mode};
 use hm_server::http::{AppState, router};
+use hm_server::push::PushState;
 use hm_server::{bootstrap, db, keys, notifier, scheduler, telemetry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -130,7 +131,19 @@ async fn serve() -> anyhow::Result<()> {
             .context("failed to set up notifications")?,
         base_url: config.base_url.as_deref().map(Arc::from),
         login_throttle: Arc::default(),
+        push: PushState::new(config.vapid_subject.as_deref()),
     };
+    if state.push.enabled() {
+        // Create the VAPID key pair now, so a broken key shows up at startup, not at the first alert.
+        state
+            .push
+            .vapid(&state.db, &state.keyring)
+            .await
+            .context("web push setup failed")?;
+        tracing::info!("web push enabled");
+    } else {
+        tracing::info!("web push disabled: set HM_VAPID_SUBJECT or an https:// HM_BASE_URL");
+    }
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
@@ -189,9 +202,12 @@ async fn run_keys(action: &KeysAction) -> anyhow::Result<()> {
     if matches!(action, KeysAction::Rotate) {
         let done = keys::rotate(&pool, &keyring).await?;
         println!(
-            "Re-wrapped {} project token(s) and {} channel config(s) to master key version {}.",
+            "Re-wrapped {} project token(s), {} channel config(s), {} push subscription(s) and {} VAPID key(s) \
+             to master key version {}.",
             done.projects,
             done.channels,
+            done.push_subscriptions,
+            done.vapid_keys,
             keyring.current_version()
         );
     }
