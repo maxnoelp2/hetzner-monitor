@@ -2,7 +2,7 @@
 
 # ---- web UI (ADR-0015, ADR-0016) ----
 # Builds web/dist. The typed API client (web/src/api/schema.d.ts) is committed, so no openapi.json is needed here.
-FROM node:24.15.0-trixie-slim AS web
+FROM node:26.13.0-trixie-slim AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
